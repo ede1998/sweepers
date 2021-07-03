@@ -8,6 +8,7 @@ pub struct Command {
 pub enum Action {
     Reveal,
     Mark,
+    Unmark,
 }
 
 impl Command {
@@ -19,6 +20,18 @@ impl Command {
     }
 
     pub fn apply(&self, mf: &mut Minefield) {
-        mf.reveal(self.location);
+        match self.action {
+            Action::Reveal => mf.reveal(self.location),
+            Action::Mark => mf.mark(self.location),
+            Action::Unmark => mf.unmark(self.location),
+        }
+    }
+
+    pub fn undo(&self, mf: &mut Minefield) {
+        match self.action {
+            Action::Reveal => mf.unreveal(self.location),
+            Action::Mark => mf.unmark(self.location),
+            Action::Unmark => mf.mark(self.location),
+        }
     }
 }

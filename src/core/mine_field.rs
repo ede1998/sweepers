@@ -116,8 +116,8 @@ impl Minefield {
     pub fn reveal(&mut self, location: Location) {
         let Minefield { ground, fog } = self;
         let s = match fog.get_mut(location) {
-            Some(State::Revealed { .. } | State::Exploded) | None => return,
-            Some(s) => s,
+            Some(s @ State::Hidden) => s,
+            _ => return,
         };
 
         let target = match ground.get(location) {
@@ -133,6 +133,30 @@ impl Minefield {
         };
 
         *s = target;
+    }
+
+    pub fn unreveal(&mut self, location: Location) {
+        let s = match self.fog.get_mut(location) {
+            Some(s @ (State::Revealed { .. } | State::Exploded)) => s,
+            _ => return,
+        };
+        *s = State::Hidden;
+    }
+
+    pub fn mark(&mut self, location: Location) {
+        let s = match self.fog.get_mut(location) {
+            Some(s @ State::Hidden) => s,
+            _ => return,
+        };
+        *s = State::Marked;
+    }
+
+    pub fn unmark(&mut self, location: Location) {
+        let s = match self.fog.get_mut(location) {
+            Some(s @ State::Marked) => s,
+            _ => return,
+        };
+        *s = State::Hidden;
     }
 }
 
