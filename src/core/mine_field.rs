@@ -120,42 +120,18 @@ impl Minefield {
             Some(s) => s,
         };
 
-        use super::location::Bounded;
-        let pr = location.x == Bounded::Valid(39);
-        if pr {
-            print!("{:?}:  ", location);
-        }
         let target = match ground.get(location) {
             Some(GroundKind::Dirt) => State::Revealed {
                 adj_mines: location
                     .neighbours()
-                    .inspect(|l| {
-                        if pr {
-                            print!("{:?} => ", l);
-                        };
-                    })
                     .filter_map(|l| ground.get(l).copied())
-                    .inspect(|l| {
-                        if pr {
-                            print!("{:?};", l);
-                        };
-                    })
                     .filter(GroundKind::is_mine)
                     .count(),
             },
-            Some(GroundKind::Mine) => {
-                if pr {
-                    print!("mine");
-                }
-                State::Exploded
-            }
+            Some(GroundKind::Mine) => State::Exploded,
             None => return,
         };
 
-        if pr {
-            println!();
-            println!();
-        }
         *s = target;
     }
 }
