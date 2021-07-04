@@ -178,6 +178,10 @@ impl Minefield {
         self.ground.iter().filter(|g| g.is_mine()).count()
     }
 
+    pub fn mark_count(&self) -> usize {
+        self.fog.iter().filter(|g| g.is_marked()).count()
+    }
+
     pub fn reveal_all(&mut self) {
         let Minefield { ground, fog } = self;
         for (index, s) in fog.iter_mut().enumerate() {

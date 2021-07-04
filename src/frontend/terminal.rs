@@ -5,6 +5,7 @@ use crate::{
 use std::{
     io::{Stdin, Stdout, Write},
     iter,
+    time::Instant,
 };
 use termion::{
     clear, color, cursor,
@@ -47,6 +48,7 @@ pub struct Term {
     stdin: Stdin,
     stdout: MouseTerminal<RawTerminal<Stdout>>,
     mine_field: Option<Minefield>,
+    start: Instant,
 }
 
 impl Term {
@@ -56,6 +58,7 @@ impl Term {
             stdin: std::io::stdin(),
             stdout,
             mine_field: None,
+            start: Instant::now(),
         }
     }
 
@@ -67,13 +70,22 @@ impl Term {
     {
         let termsize = termion::terminal_size().ok();
         let termwidth = termsize.map(|(w, _)| w as usize - 2);
-        let termheight = termsize.map(|(_, h)| h as usize - 2);
+        let termheight = termsize.map(|(_, h)| h as usize - 5);
         let width = width.into().or(termwidth).unwrap_or(70);
         let height = height.into().or(termheight).unwrap_or(40);
         let mines = mines.into().unwrap_or(width * height / 5);
 
         self.mine_field = generator::simple_generate(mines, width, height).into();
         write!(self.stdout, "{}", clear::All).unwrap();
+    }
+
+    pub fn go(&mut self) {
+        self.start = Instant::now();
+        eprintln!("start");
+        while self.run() {
+            eprintln!("running again.");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     pub fn run(&mut self) -> bool {
@@ -86,27 +98,21 @@ impl Term {
         use termion::event::MouseButton;
         use termion::event::MouseEvent;
 
-        let events: Vec<_> = (&mut self.stdin).events().take(1).collect();
-        for e in events.into_iter() {
-            match e {
-                Ok(Event::Mouse(MouseEvent::Press(btn, x, y))) => {
-                    let action = match btn {
-                        MouseButton::Left => Action::Reveal,
-                        MouseButton::Right => Action::ToggleMark,
-                        _ => continue,
-                    };
-                    let minus2 = |b| b - Bounded::Valid(2);
-                    let l = Location::new(x, y).map_x(minus2).map_y(minus2);
-                    let cmd = Command::new(l, action);
-                    return self.update(cmd);
-                }
-                Ok(Event::Key(Char('q'))) => return false,
-                Err(_) => return false,
-                _ => {}
+        match (&mut self.stdin).events().next().transpose().ok().flatten() {
+            Some(Event::Mouse(MouseEvent::Press(btn, x, y))) => {
+                let action = match btn {
+                    MouseButton::Left => Action::Reveal,
+                    MouseButton::Right => Action::ToggleMark,
+                    _ => return true,
+                };
+                let minus2 = |b| b - Bounded::Valid(2);
+                let l = Location::new(x, y).map_x(minus2).map_y(minus2);
+                let cmd = Command::new(l, action);
+                self.update(cmd)
             }
+            None | Some(Event::Key(Char('q'))) => false,
+            _ => true,
         }
-
-        true
     }
 
     fn update(&mut self, cmd: Command) -> bool {
@@ -129,7 +135,7 @@ impl Term {
             GameState::InProgress => {}
         }
 
-        self.print_points();
+        self.print_info();
         self.stdout.flush().unwrap();
         true
     }
@@ -171,13 +177,18 @@ impl Term {
         Location::new(x, y)
     }
 
-    /// Print the point count.
-    fn print_points(&mut self) {
+    fn print_info(&mut self) {
         let mine_field = self.mine_field.as_mut().unwrap();
-        let goto = cursor::Goto(3, mine_field.height() as u16 + 2);
-        write!(self.stdout, "{}", goto).unwrap();
-        let mc = mine_field.mine_count();
-        write!(self.stdout, "{}", mc).unwrap();
+        let total_mines = mine_field.mine_count();
+        let marked_mines = mine_field.mark_count();
+        let elapsed = self.start.elapsed().as_secs();
+        let goto = cursor::Goto(3, mine_field.height() as u16 + 3);
+        write!(
+            self.stdout,
+            "{}Mines: {:>3}/{:>3}, Time: {} seconds",
+            goto, marked_mines, total_mines, elapsed
+        )
+        .unwrap();
     }
 
     fn write(&mut self, data: &[u8]) {
@@ -214,9 +225,7 @@ impl Term {
         let bottom_frame = row(BOTTOM_LEFT_CORNER, HORZ_BOUNDARY, BOTTOM_RIGHT_CORNER);
         self.write_iter(top_frame.chain(body).chain(bottom_frame));
 
-        // let (x, y) = self.cursor.as_tuple().unwrap();
-
-        // write!(self.stdout, "{}", cursor::Goto(x as u16 + 2, y as u16 + 2)).unwrap();
+        self.print_info();
         self.stdout.flush().unwrap();
     }
 }
