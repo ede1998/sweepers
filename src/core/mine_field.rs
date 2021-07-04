@@ -1,6 +1,13 @@
-use std::{fmt, iter, ops::Index};
+use std::{
+    collections::VecDeque,
+    fmt, iter,
+    ops::Index,
+    time::{Duration, Instant},
+};
 
 use crate::core::Location;
+
+use super::{Action, ExecutedCommand, PendingCommand};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Area<T> {
@@ -124,15 +131,10 @@ impl fmt::Display for State {
     }
 }
 
-pub enum GameState {
-    Lost,
-    Won,
-    InProgress,
-}
-
 pub struct Minefield {
     ground: Area<GroundKind>,
     pub fog: Area<State>,
+    state: GameState,
 }
 
 impl Minefield {
@@ -140,24 +142,12 @@ impl Minefield {
         Self {
             ground: Area::new(width, height),
             fog: Area::new(width, height),
+            state: Default::default(),
         }
     }
 
-    pub fn game_state(&self) -> GameState {
-        let lost = self.fog.iter().any(State::is_exploded);
-        let won = self
-            .fog
-            .iter()
-            .zip(self.ground.iter())
-            .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
-
-        if lost {
-            GameState::Lost
-        } else if won {
-            GameState::Won
-        } else {
-            GameState::InProgress
-        }
+    pub fn state(&self) -> &GameState {
+        &self.state
     }
 
     pub fn set_mines(&mut self, locations: impl Iterator<Item = Location>) {
@@ -183,22 +173,51 @@ impl Minefield {
     }
 
     pub fn reveal_all(&mut self) {
-        let Minefield { ground, fog } = self;
-        for (index, s) in fog.iter_mut().enumerate() {
+        let Minefield { ground, fog, .. } = self;
+        for (index, (s, &g)) in fog.iter_mut().zip(ground.iter()).enumerate() {
             let location = Location::from_index(index, ground.width);
-            Self::reveal_location(s, ground, location)
+            match g {
+                GroundKind::Mine => *s = State::Exploded,
+                GroundKind::Dirt => {
+                    *s = State::Revealed {
+                        adj_mines: Self::count_mines_in_neighbourhood(ground, location),
+                    }
+                }
+            }
         }
     }
 
-    fn reveal_location(state: &mut State, ground: &Area<GroundKind>, location: Location) {
-        let target = match ground.get(location) {
-            Some(GroundKind::Dirt) => State::Revealed {
-                adj_mines: Self::count_mines_in_neighbourhood(ground, location),
-            },
-            Some(GroundKind::Mine) => State::Exploded,
-            None => return,
-        };
-        *state = target;
+    fn reveal_location(
+        fog: &mut Area<State>,
+        ground: &Area<GroundKind>,
+        location: Location,
+    ) -> Vec<Location> {
+        let mut pending: VecDeque<_> = std::iter::once(location).collect();
+        let mut affected = vec![];
+
+        while let Some(current) = pending.pop_front() {
+            let state = match fog.get_mut(current) {
+                Some(state @ State::Hidden) => state,
+                _ => continue,
+            };
+
+            let target_state = match ground.get(current) {
+                Some(GroundKind::Dirt) => State::Revealed {
+                    adj_mines: Self::count_mines_in_neighbourhood(ground, current),
+                },
+                Some(GroundKind::Mine) => State::Exploded,
+                None => continue,
+            };
+
+            *state = target_state;
+            affected.push(current);
+
+            if let State::Revealed { adj_mines: 0 } = target_state {
+                pending.extend(current.neighbours());
+            }
+        }
+
+        affected
     }
 
     fn count_mines_in_neighbourhood(ground: &Area<GroundKind>, location: Location) -> usize {
@@ -207,13 +226,6 @@ impl Minefield {
             .filter_map(|l| ground.get(l).copied())
             .filter(GroundKind::is_mine)
             .count()
-    }
-
-    pub fn reveal(&mut self, location: Location) -> Option<State> {
-        let Minefield { ground, fog } = self;
-        let s = fog.get_mut(location).filter(|s| s.is_hidden())?;
-        Self::reveal_location(s, ground, location);
-        Some(*s)
     }
 
     pub fn unreveal(&mut self, location: Location) -> Option<State> {
@@ -225,24 +237,25 @@ impl Minefield {
         Some(*s)
     }
 
-    pub fn mark(&mut self, location: Location) -> Option<State> {
-        let s = self.fog.get_mut(location).filter(|s| s.is_hidden())?;
-        *s = State::Marked;
-        Some(*s)
-    }
-
-    pub fn unmark(&mut self, location: Location) -> Option<State> {
-        let s = self.fog.get_mut(location).filter(|s| s.is_marked())?;
-        *s = State::Hidden;
-        Some(*s)
-    }
-
-    pub fn toggle_mark(&mut self, location: Location) -> Option<State> {
-        match self.fog.get_mut(location)? {
-            State::Marked => self.unmark(location),
-            State::Hidden => self.mark(location),
-            _ => None,
+    pub fn execute(&mut self, cmd: PendingCommand) -> Option<ExecutedCommand> {
+        eprintln!(
+            "Executing action {:?} at location {}",
+            cmd.action, cmd.location
+        );
+        let Minefield { ground, fog, state } = self;
+        let mut updated_locations = vec![cmd.location];
+        match (cmd.action, fog.get_mut(cmd.location)?) {
+            (Action::Reveal, State::Hidden) => {
+                updated_locations = Self::reveal_location(fog, ground, cmd.location);
+            }
+            (Action::ToggleMark | Action::Mark, s @ State::Hidden) => *s = State::Marked,
+            (Action::ToggleMark | Action::Unmark, s @ State::Marked) => *s = State::Hidden,
+            _ => return None,
         }
+
+        state.update(fog, ground);
+
+        Some(cmd.executed(updated_locations))
     }
 }
 
@@ -258,5 +271,53 @@ impl fmt::Display for Minefield {
             writeln!(f, "|")?;
         }
         writeln!(f, "+{}+", delimiter)
+    }
+}
+
+pub enum GameState {
+    Initial,
+    InProgress { start_time: Instant },
+    Loss { game_duration: Duration },
+    Win { game_duration: Duration },
+}
+
+impl GameState {
+    fn update(&mut self, fog: &Area<State>, ground: &Area<GroundKind>) {
+        *self = match self {
+            GameState::Initial => match fog.iter().all(State::is_hidden) {
+                true => GameState::Initial,
+                false => GameState::InProgress {
+                    start_time: Instant::now(),
+                },
+            },
+            GameState::InProgress { start_time } => {
+                let lost = fog.iter().any(State::is_exploded);
+                let won = fog
+                    .iter()
+                    .zip(ground.iter())
+                    .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
+                match (won, lost) {
+                    (false, true) => GameState::Loss {
+                        game_duration: start_time.elapsed(),
+                    },
+                    (true, false) => GameState::Win {
+                        game_duration: start_time.elapsed(),
+                    },
+                    (false, false) => GameState::InProgress {
+                        start_time: *start_time,
+                    },
+                    (true, true) => {
+                        panic!("Invalid transition, both win and lose at the same time.")
+                    }
+                }
+            }
+            _ => return,
+        };
+    }
+}
+
+impl Default for GameState {
+    fn default() -> Self {
+        GameState::Initial
     }
 }

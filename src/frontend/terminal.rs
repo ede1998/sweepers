@@ -1,11 +1,11 @@
 use crate::{
-    core::{Action, Bounded, Command, GameState, Location, Minefield, State},
+    core::{Action, Bounded, GameState, Location, Minefield, PendingCommand, State},
     generator,
 };
 use std::{
+    borrow::Cow,
     io::{Stdout, Write},
     iter,
-    time::Instant,
 };
 use termion::{
     clear, cursor,
@@ -48,7 +48,6 @@ pub struct Term {
     stdin: AsyncReader,
     stdout: MouseTerminal<RawTerminal<Stdout>>,
     mine_field: Minefield,
-    start: Instant,
 }
 
 impl Term {
@@ -65,18 +64,14 @@ impl Term {
         let (width, height) = size.or(termsize).unwrap_or((70, 40));
         let mines = mines.into().unwrap_or(width * height / 6);
 
-        let mine_field = generator::simple_generate(mines, width, height).into();
-        let stdout = std::io::stdout().into_raw_mode().unwrap().into();
         Self {
             stdin: termion::async_stdin(),
-            stdout,
-            mine_field: mine_field,
-            start: Instant::now(),
+            stdout: std::io::stdout().into_raw_mode().unwrap().into(),
+            mine_field: generator::simple_generate(mines, width, height).into(),
         }
     }
 
     pub fn go(&mut self) {
-        self.start = Instant::now();
         eprintln!("start");
         while self.run() {
             self.stdout.flush().unwrap();
@@ -98,7 +93,7 @@ impl Term {
                 };
                 let minus2 = |b| b - Bounded::Valid(2);
                 let l = Location::new(x, y).map_x(minus2).map_y(minus2);
-                let cmd = Command::new(l, action);
+                let cmd = PendingCommand::new(l, action);
                 self.update_mine_field(cmd)
             }
             Some(Event::Key(Char('q'))) => false,
@@ -106,21 +101,16 @@ impl Term {
         }
     }
 
-    fn update_mine_field(&mut self, cmd: Command) -> bool {
-        let cmds = cmd.apply_recursively(&mut self.mine_field);
-        let update_locations = cmds.iter().map(|l| l.location);
+    fn update_mine_field(&mut self, cmd: PendingCommand) -> bool {
+        let cmd = match self.mine_field.execute(cmd) {
+            Some(cmd) => cmd,
+            None => return true,
+        };
 
         eprintln!("Applied action.");
-        for l in update_locations {
+        for l in cmd.updated_locations {
             self.draw_location(l);
         }
-
-        match self.mine_field.game_state() {
-            GameState::Lost => return false,
-            GameState::Won => return false,
-            GameState::InProgress => {}
-        }
-
         true
     }
 
@@ -158,12 +148,20 @@ impl Term {
     fn print_info(&mut self) {
         let total_mines = self.mine_field.mine_count();
         let marked_mines = self.mine_field.mark_count();
-        let elapsed = self.start.elapsed().as_secs();
+        use GameState::*;
+        let status: Cow<_> = match self.mine_field.state() {
+            Initial => "Ready to go.".into(),
+            Win { game_duration } => format!("VICTORY! ({} sec)", game_duration.as_secs()).into(),
+            Loss { game_duration } => format!("DEFEAT. ({} secs)", game_duration.as_secs()).into(),
+            InProgress { start_time } => {
+                format!("Time: {} seconds", start_time.elapsed().as_secs()).into()
+            }
+        };
         let goto = cursor::Goto(3, self.mine_field.height() as u16 + 3);
         write!(
             self.stdout,
-            "{}Mines: {:>3}/{:>3}, Time: {} seconds",
-            goto, marked_mines, total_mines, elapsed
+            "{}Mines: {:>3}/{:>3}, {}",
+            goto, marked_mines, total_mines, status
         )
         .unwrap();
     }
