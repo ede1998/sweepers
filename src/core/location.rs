@@ -1,5 +1,6 @@
 use std::{
     array::IntoIter,
+    fmt,
     ops::{Add, Mul, Sub},
 };
 
@@ -7,6 +8,21 @@ use std::{
 pub enum Bounded {
     Invalid,
     Valid(usize),
+}
+
+impl fmt::Display for Bounded {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Bounded::Invalid => write!(f, "NaN"),
+            Bounded::Valid(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Default for Bounded {
+    fn default() -> Self {
+        Self::Invalid
+    }
 }
 
 impl Bounded {
@@ -17,11 +33,22 @@ impl Bounded {
             _ => Invalid,
         }
     }
+
+    /// Returns `true` if the bounded is [`Invalid`].
+    pub fn is_invalid(&self) -> bool {
+        matches!(self, Self::Invalid)
+    }
 }
 
 impl From<usize> for Bounded {
     fn from(f: usize) -> Self {
         Self::Valid(f)
+    }
+}
+
+impl From<u16> for Bounded {
+    fn from(f: u16) -> Self {
+        Self::Valid(f.into())
     }
 }
 
@@ -58,13 +85,11 @@ impl Mul for Bounded {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Location {
     pub x: Bounded,
     pub y: Bounded,
 }
-
-const ONE: Bounded = Bounded::Valid(1);
 
 impl Location {
     pub fn new<I, J>(x: I, y: J) -> Self
@@ -93,42 +118,52 @@ impl Location {
     }
 
     pub fn neighbours(&self) -> impl Iterator<Item = Location> {
+        use Direction::*;
         IntoIter::new([
-            self.up().left(),
-            self.up(),
-            self.up().right(),
-            self.left(),
-            self.right(),
-            self.down().left(),
-            self.down(),
-            self.down().right(),
+            self.mv(Up).mv(Left),
+            self.mv(Up),
+            self.mv(Up).mv(Right),
+            self.mv(Left),
+            self.mv(Right),
+            self.mv(Down).mv(Left),
+            self.mv(Down),
+            self.mv(Down).mv(Right),
         ])
     }
 
-    fn map_x<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
+    pub fn map_x<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
         self.x = f(self.x);
         self
     }
 
-    fn map_y<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
+    pub fn map_y<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
         self.y = f(self.y);
         self
     }
 
-    fn left(self) -> Self {
-        self.map_x(|x| x - ONE)
+    pub fn mv(self, d: Direction) -> Self {
+        let one = Bounded::Valid(1);
+        match d {
+            Direction::Left => self.map_x(|x| x - one),
+            Direction::Right => self.map_x(|x| x + one),
+            Direction::Up => self.map_y(|y| y - one),
+            Direction::Down => self.map_y(|y| y + one),
+        }
     }
 
-    fn right(self) -> Self {
-        self.map_x(|x| x + ONE)
+    pub fn try_mv(self, d: Direction) -> Self {
+        let original = self;
+        let new = self.mv(d);
+        match new.x.is_invalid() || new.y.is_invalid() {
+            true => original,
+            false => new,
+        }
     }
 
-    fn up(self) -> Self {
-        self.map_y(|y| y - ONE)
-    }
-
-    fn down(self) -> Self {
-        self.map_y(|y| y + ONE)
+    pub fn as_tuple(self) -> Option<(usize, usize)> {
+        let x: Option<_> = self.x.into();
+        let y: Option<_> = self.y.into();
+        x.zip(y)
     }
 }
 
@@ -136,4 +171,18 @@ impl From<(usize, usize)> for Location {
     fn from((x, y): (usize, usize)) -> Self {
         Location::new(x, y)
     }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({},{})", self.x, self.y)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
 }

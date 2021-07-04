@@ -1,16 +1,24 @@
 #![allow(dead_code)]
 
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
+
+use frontend::Term;
+
 mod core;
 mod frontend;
 mod generator;
 
 fn main() {
-    println!("Hello, world!");
-    let mut mf = generator::simple_generate(20, 40, 20);
-    for x in 0..40 {
-        for y in 0..20 {
-            mf.reveal((x, y).into())
-        }
+    let mut term = Term::new();
+    term.init(None, None, 20);
+    term.reset();
+    let start = Instant::now();
+    eprintln!("start");
+    while term.run() {
+        eprintln!("running again.");
+        sleep(Duration::from_millis(10));
     }
-    println!("{}", mf);
 }

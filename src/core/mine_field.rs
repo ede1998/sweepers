@@ -34,6 +34,14 @@ impl<T> Area<T> {
     pub fn rows(&self) -> impl Iterator<Item = &[T]> {
         self.area.chunks(self.width)
     }
+
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.area.iter()
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.area.iter_mut()
+    }
 }
 
 impl<T> Index<Location> for Area<T> {
@@ -77,6 +85,28 @@ pub enum State {
     Exploded,
 }
 
+impl State {
+    /// Returns `true` if the state is [`Exploded`].
+    pub fn is_exploded(&self) -> bool {
+        matches!(self, Self::Exploded)
+    }
+
+    /// Returns `true` if the state is [`Revealed`].
+    pub fn is_revealed(&self) -> bool {
+        matches!(self, Self::Revealed { .. })
+    }
+
+    /// Returns `true` if the state is [`Hidden`].
+    pub fn is_hidden(&self) -> bool {
+        matches!(self, Self::Hidden)
+    }
+
+    /// Returns `true` if the state is [`Marked`].
+    pub fn is_marked(&self) -> bool {
+        matches!(self, Self::Marked)
+    }
+}
+
 impl Default for State {
     fn default() -> Self {
         Self::Hidden
@@ -94,9 +124,15 @@ impl fmt::Display for State {
     }
 }
 
+pub enum GameState {
+    Lost,
+    Won,
+    InProgress,
+}
+
 pub struct Minefield {
     ground: Area<GroundKind>,
-    fog: Area<State>,
+    pub fog: Area<State>,
 }
 
 impl Minefield {
@@ -107,56 +143,102 @@ impl Minefield {
         }
     }
 
+    pub fn game_state(&self) -> GameState {
+        let lost = self.fog.iter().any(State::is_exploded);
+        let won = self
+            .fog
+            .iter()
+            .zip(self.ground.iter())
+            .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
+
+        if lost {
+            GameState::Lost
+        } else if won {
+            GameState::Won
+        } else {
+            GameState::InProgress
+        }
+    }
+
     pub fn set_mines(&mut self, locations: impl Iterator<Item = Location>) {
         for l in locations {
             self.ground.get_mut(l).map(|g| *g = GroundKind::Mine);
         }
     }
 
-    pub fn reveal(&mut self, location: Location) {
-        let Minefield { ground, fog } = self;
-        let s = match fog.get_mut(location) {
-            Some(s @ State::Hidden) => s,
-            _ => return,
-        };
+    pub fn width(&self) -> usize {
+        self.fog.width
+    }
 
+    pub fn height(&self) -> usize {
+        self.fog.height
+    }
+
+    pub fn mine_count(&self) -> usize {
+        self.ground.iter().filter(|g| g.is_mine()).count()
+    }
+
+    pub fn reveal_all(&mut self) {
+        let Minefield { ground, fog } = self;
+        for (index, s) in fog.iter_mut().enumerate() {
+            let location = Location::from_index(index, ground.width);
+            Self::reveal_location(s, ground, location)
+        }
+    }
+
+    fn reveal_location(state: &mut State, ground: &Area<GroundKind>, location: Location) {
         let target = match ground.get(location) {
             Some(GroundKind::Dirt) => State::Revealed {
-                adj_mines: location
-                    .neighbours()
-                    .filter_map(|l| ground.get(l).copied())
-                    .filter(GroundKind::is_mine)
-                    .count(),
+                adj_mines: Self::count_mines_in_neighbourhood(ground, location),
             },
             Some(GroundKind::Mine) => State::Exploded,
             None => return,
         };
-
-        *s = target;
+        *state = target;
     }
 
-    pub fn unreveal(&mut self, location: Location) {
-        let s = match self.fog.get_mut(location) {
-            Some(s @ (State::Revealed { .. } | State::Exploded)) => s,
-            _ => return,
-        };
+    fn count_mines_in_neighbourhood(ground: &Area<GroundKind>, location: Location) -> usize {
+        location
+            .neighbours()
+            .filter_map(|l| ground.get(l).copied())
+            .filter(GroundKind::is_mine)
+            .count()
+    }
+
+    pub fn reveal(&mut self, location: Location) -> Option<State> {
+        let Minefield { ground, fog } = self;
+        let s = fog.get_mut(location).filter(|s| s.is_hidden())?;
+        Self::reveal_location(s, ground, location);
+        Some(*s)
+    }
+
+    pub fn unreveal(&mut self, location: Location) -> Option<State> {
+        let s = self
+            .fog
+            .get_mut(location)
+            .filter(|s| s.is_hidden() || s.is_revealed())?;
         *s = State::Hidden;
+        Some(*s)
     }
 
-    pub fn mark(&mut self, location: Location) {
-        let s = match self.fog.get_mut(location) {
-            Some(s @ State::Hidden) => s,
-            _ => return,
-        };
+    pub fn mark(&mut self, location: Location) -> Option<State> {
+        let s = self.fog.get_mut(location).filter(|s| s.is_hidden())?;
         *s = State::Marked;
+        Some(*s)
     }
 
-    pub fn unmark(&mut self, location: Location) {
-        let s = match self.fog.get_mut(location) {
-            Some(s @ State::Marked) => s,
-            _ => return,
-        };
+    pub fn unmark(&mut self, location: Location) -> Option<State> {
+        let s = self.fog.get_mut(location).filter(|s| s.is_marked())?;
         *s = State::Hidden;
+        Some(*s)
+    }
+
+    pub fn toggle_mark(&mut self, location: Location) -> Option<State> {
+        match self.fog.get_mut(location)? {
+            State::Marked => self.unmark(location),
+            State::Hidden => self.mark(location),
+            _ => None,
+        }
     }
 }
 
