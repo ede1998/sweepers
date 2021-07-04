@@ -1,5 +1,7 @@
 use crate::{
-    core::{Action, Bounded, GameState, Location, Minefield, PendingCommand, State},
+    core::{
+        Action, Bounded, ExecutionResult, GameState, Location, Minefield, PendingCommand, State,
+    },
     generator,
 };
 use std::{
@@ -79,12 +81,38 @@ impl Term {
         }
     }
 
+    fn read_input(&mut self) -> Option<termion::event::Event> {
+        (&mut self.stdin).events().next().transpose().ok().flatten()
+    }
+
     pub fn run(&mut self) -> bool {
         self.print_info();
+        match self.mine_field.state() {
+            GameState::Initial | GameState::InProgress { .. } => self.run_in_progress(),
+            GameState::Loss { .. } | GameState::Win { .. } => self.run_after(),
+        }
+    }
 
+    pub fn run_after(&mut self) -> bool {
+        use termion::event::{Event, Key::*};
+        match self.read_input() {
+            Some(Event::Key(Char('q'))) => false,
+            Some(Event::Key(Char('r'))) => {
+                let mines = self.mine_field.mine_count();
+                let width = self.mine_field.width();
+                let height = self.mine_field.height();
+                self.mine_field = generator::simple_generate(mines, width, height).into();
+                self.reset();
+                true
+            }
+            _ => true,
+        }
+    }
+
+    pub fn run_in_progress(&mut self) -> bool {
         use termion::event::{Event, Key::*, MouseButton, MouseEvent};
 
-        match (&mut self.stdin).events().next().transpose().ok().flatten() {
+        match self.read_input() {
             Some(Event::Mouse(MouseEvent::Press(btn, x, y))) => {
                 let action = match btn {
                     MouseButton::Left => Action::Reveal,
@@ -94,7 +122,11 @@ impl Term {
                 let minus2 = |b| b - Bounded::Valid(2);
                 let l = Location::new(x, y).map_x(minus2).map_y(minus2);
                 let cmd = PendingCommand::new(l, action);
-                self.update_mine_field(cmd)
+                let state_change = self.update_mine_field(cmd);
+                if state_change && self.mine_field.state().is_loss() {
+                    self.mine_field.reveal_all();
+                }
+                true
             }
             Some(Event::Key(Char('q'))) => false,
             _ => true,
@@ -103,8 +135,9 @@ impl Term {
 
     fn update_mine_field(&mut self, cmd: PendingCommand) -> bool {
         let cmd = match self.mine_field.execute(cmd) {
-            Some(cmd) => cmd,
-            None => return true,
+            ExecutionResult::SuccessAndStateChange(cmd)
+            | ExecutionResult::SuccessNoStateChange(cmd) => cmd,
+            ExecutionResult::Failed => return false,
         };
 
         eprintln!("Applied action.");
@@ -119,21 +152,26 @@ impl Term {
             Some(g) => g,
             None => return,
         };
+        use termion::color::{Fg, Red, Reset};
 
         write!(self.stdout, "{}", goto).unwrap();
-        let mine_count;
-        let element = match self.mine_field.fog.get(location) {
-            Some(State::Hidden) => CONCEALED,
-            Some(State::Exploded) => MINE,
-            Some(State::Revealed { adj_mines }) => {
-                mine_count = adj_mines.to_string();
-                mine_count.as_bytes()
-            }
-            Some(State::Marked) => FLAGGED,
+        let element: Cow<_> = match self.mine_field.fog.get(location) {
+            Some(State::Hidden) => CONCEALED.into(),
+            Some(State::Exploded) => MINE.into(),
+            Some(State::Revealed { adj_mines }) => adj_mines.to_string().as_bytes().to_vec().into(),
+            Some(State::Marked) => format!(
+                "{}{}{}",
+                Fg(Red),
+                std::str::from_utf8(FLAGGED).unwrap(),
+                Fg(Reset)
+            )
+            .as_bytes()
+            .to_vec()
+            .into(),
             None => return,
         };
 
-        self.write(element);
+        self.write(&element);
     }
 
     fn location_to_cursor(&self, location: Location) -> Option<cursor::Goto> {

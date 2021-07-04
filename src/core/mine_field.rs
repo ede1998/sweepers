@@ -131,6 +131,12 @@ impl fmt::Display for State {
     }
 }
 
+pub enum ExecutionResult {
+    Failed,
+    SuccessAndStateChange(ExecutedCommand),
+    SuccessNoStateChange(ExecutedCommand),
+}
+
 pub struct Minefield {
     ground: Area<GroundKind>,
     pub fog: Area<State>,
@@ -237,25 +243,26 @@ impl Minefield {
         Some(*s)
     }
 
-    pub fn execute(&mut self, cmd: PendingCommand) -> Option<ExecutedCommand> {
+    pub fn execute(&mut self, cmd: PendingCommand) -> ExecutionResult {
         eprintln!(
             "Executing action {:?} at location {}",
             cmd.action, cmd.location
         );
         let Minefield { ground, fog, state } = self;
         let mut updated_locations = vec![cmd.location];
-        match (cmd.action, fog.get_mut(cmd.location)?) {
-            (Action::Reveal, State::Hidden) => {
+        match (cmd.action, fog.get_mut(cmd.location)) {
+            (Action::Reveal, Some(State::Hidden)) => {
                 updated_locations = Self::reveal_location(fog, ground, cmd.location);
             }
-            (Action::ToggleMark | Action::Mark, s @ State::Hidden) => *s = State::Marked,
-            (Action::ToggleMark | Action::Unmark, s @ State::Marked) => *s = State::Hidden,
-            _ => return None,
+            (Action::ToggleMark | Action::Mark, Some(s @ State::Hidden)) => *s = State::Marked,
+            (Action::ToggleMark | Action::Unmark, Some(s @ State::Marked)) => *s = State::Hidden,
+            _ => return ExecutionResult::Failed,
         }
 
-        state.update(fog, ground);
-
-        Some(cmd.executed(updated_locations))
+        match state.update(fog, ground) {
+            true => ExecutionResult::SuccessAndStateChange(cmd.executed(updated_locations)),
+            false => ExecutionResult::SuccessNoStateChange(cmd.executed(updated_locations)),
+        }
     }
 }
 
@@ -274,6 +281,7 @@ impl fmt::Display for Minefield {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameState {
     Initial,
     InProgress { start_time: Instant },
@@ -282,37 +290,50 @@ pub enum GameState {
 }
 
 impl GameState {
-    fn update(&mut self, fog: &Area<State>, ground: &Area<GroundKind>) {
-        *self = match self {
+    fn update(&mut self, fog: &Area<State>, ground: &Area<GroundKind>) -> bool {
+        let lost = fog.iter().any(State::is_exploded);
+        let won = fog
+            .iter()
+            .zip(ground.iter())
+            .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
+        let new = match self {
             GameState::Initial => match fog.iter().all(State::is_hidden) {
-                true => GameState::Initial,
-                false => GameState::InProgress {
-                    start_time: Instant::now(),
+                true => self.clone(),
+                false => match lost {
+                    true => GameState::Loss {
+                        game_duration: Duration::ZERO,
+                    },
+                    false => GameState::InProgress {
+                        start_time: Instant::now(),
+                    },
                 },
             },
-            GameState::InProgress { start_time } => {
-                let lost = fog.iter().any(State::is_exploded);
-                let won = fog
-                    .iter()
-                    .zip(ground.iter())
-                    .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
-                match (won, lost) {
-                    (false, true) => GameState::Loss {
-                        game_duration: start_time.elapsed(),
-                    },
-                    (true, false) => GameState::Win {
-                        game_duration: start_time.elapsed(),
-                    },
-                    (false, false) => GameState::InProgress {
-                        start_time: *start_time,
-                    },
-                    (true, true) => {
-                        panic!("Invalid transition, both win and lose at the same time.")
-                    }
+            GameState::InProgress { start_time } => match (won, lost) {
+                (false, true) => GameState::Loss {
+                    game_duration: start_time.elapsed(),
+                },
+                (true, false) => GameState::Win {
+                    game_duration: start_time.elapsed(),
+                },
+                (false, false) => self.clone(),
+                (true, true) => {
+                    panic!("Invalid transition, both win and lose at the same time.")
                 }
-            }
-            _ => return,
+            },
+            _ => self.clone(),
         };
+        let old = std::mem::replace(self, new);
+        *self != old
+    }
+
+    /// Returns `true` if the game_state is [`Win`].
+    pub fn is_win(&self) -> bool {
+        matches!(self, Self::Win { .. })
+    }
+
+    /// Returns `true` if the game_state is [`Loss`].
+    pub fn is_loss(&self) -> bool {
+        matches!(self, Self::Loss { .. })
     }
 }
 
