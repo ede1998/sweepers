@@ -8,10 +8,10 @@ use std::{
     time::Instant,
 };
 use termion::{
-    clear, color, cursor,
+    async_stdin, clear, color, cursor,
     input::{MouseTerminal, TermRead},
     raw::{IntoRawMode, RawTerminal},
-    style,
+    style, AsyncReader,
 };
 
 /// The string printed for flagged cells.
@@ -45,7 +45,7 @@ const BOTTOM_RIGHT_CORNER: &'static [u8] = "┘".as_bytes();
 const NEW_LINE: &'static [u8] = "\n\r".as_bytes();
 
 pub struct Term {
-    stdin: Stdin,
+    stdin: AsyncReader,
     stdout: MouseTerminal<RawTerminal<Stdout>>,
     mine_field: Option<Minefield>,
     start: Instant,
@@ -53,10 +53,9 @@ pub struct Term {
 
 impl Term {
     pub fn new() -> Self {
-        let stdout: MouseTerminal<_> = std::io::stdout().into_raw_mode().unwrap().into();
         Self {
-            stdin: std::io::stdin(),
-            stdout,
+            stdin: termion::async_stdin(),
+            stdout: std::io::stdout().into_raw_mode().unwrap().into(),
             mine_field: None,
             start: Instant::now(),
         }
@@ -76,14 +75,14 @@ impl Term {
         let mines = mines.into().unwrap_or(width * height / 5);
 
         self.mine_field = generator::simple_generate(mines, width, height).into();
-        write!(self.stdout, "{}", clear::All).unwrap();
+        write!(self.stdout, "{}{}", clear::All, cursor::Hide).unwrap();
     }
 
     pub fn go(&mut self) {
         self.start = Instant::now();
         eprintln!("start");
         while self.run() {
-            eprintln!("running again.");
+            self.stdout.flush().unwrap();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
@@ -93,10 +92,9 @@ impl Term {
             return false;
         }
 
-        use termion::event::Event;
-        use termion::event::Key::*;
-        use termion::event::MouseButton;
-        use termion::event::MouseEvent;
+        self.print_info();
+
+        use termion::event::{Event, Key::*, MouseButton, MouseEvent};
 
         match (&mut self.stdin).events().next().transpose().ok().flatten() {
             Some(Event::Mouse(MouseEvent::Press(btn, x, y))) => {
@@ -108,14 +106,14 @@ impl Term {
                 let minus2 = |b| b - Bounded::Valid(2);
                 let l = Location::new(x, y).map_x(minus2).map_y(minus2);
                 let cmd = Command::new(l, action);
-                self.update(cmd)
+                self.update_mine_field(cmd)
             }
-            None | Some(Event::Key(Char('q'))) => false,
+            Some(Event::Key(Char('q'))) => false,
             _ => true,
         }
     }
 
-    fn update(&mut self, cmd: Command) -> bool {
+    fn update_mine_field(&mut self, cmd: Command) -> bool {
         if self.mine_field.is_none() {
             return false;
         }
@@ -135,8 +133,6 @@ impl Term {
             GameState::InProgress => {}
         }
 
-        self.print_info();
-        self.stdout.flush().unwrap();
         true
     }
 
@@ -160,7 +156,6 @@ impl Term {
         };
 
         self.write(element);
-        self.stdout.flush().unwrap();
     }
 
     fn location_to_cursor(&self, location: Location) -> Option<cursor::Goto> {
@@ -235,10 +230,11 @@ impl Drop for Term {
         // When done, restore the defaults to avoid messing with the terminal.
         write!(
             self.stdout,
-            "{}{}{}",
+            "{}{}{}{}",
             clear::All,
             style::Reset,
             cursor::Goto(1, 1),
+            cursor::Show,
         )
         .unwrap();
         self.stdout.flush().unwrap();
