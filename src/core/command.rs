@@ -1,4 +1,3 @@
-use core::fmt;
 use std::{collections::VecDeque, vec};
 
 use super::{Location, Minefield, State};
