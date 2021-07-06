@@ -1,7 +1,7 @@
 use std::{
     array::IntoIter,
     fmt,
-    ops::{Add, Mul, Sub},
+    ops::{Add, AddAssign, Mul, Sub, SubAssign},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,6 +77,18 @@ impl Add for Bounded {
     }
 }
 
+impl AddAssign for Bounded {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign for Bounded {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
 impl Mul for Bounded {
     type Output = Self;
 
@@ -131,23 +143,37 @@ impl Location {
         ])
     }
 
-    pub fn map_x<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
-        self.x = f(self.x);
+    pub fn x_plus<I: Into<Bounded>>(mut self, num: I) -> Self {
+        let num = num.into();
+        self.x += num;
         self
     }
 
-    pub fn map_y<F: FnOnce(Bounded) -> Bounded>(mut self, f: F) -> Self {
-        self.y = f(self.y);
+    pub fn x_minus<I: Into<Bounded>>(mut self, num: I) -> Self {
+        let num = num.into();
+        self.x -= num;
+        self
+    }
+
+    pub fn y_plus<I: Into<Bounded>>(mut self, num: I) -> Self {
+        let num = num.into();
+        self.y += num;
+        self
+    }
+
+    pub fn y_minus<I: Into<Bounded>>(mut self, num: I) -> Self {
+        let num = num.into();
+        self.y -= num;
         self
     }
 
     pub fn mv(self, d: Direction) -> Self {
         let one = Bounded::Valid(1);
         match d {
-            Direction::Left => self.map_x(|x| x - one),
-            Direction::Right => self.map_x(|x| x + one),
-            Direction::Up => self.map_y(|y| y - one),
-            Direction::Down => self.map_y(|y| y + one),
+            Direction::Left => self.x_minus(1u16),
+            Direction::Right => self.x_plus(1u16),
+            Direction::Up => self.y_minus(1u16),
+            Direction::Down => self.y_plus(1u16),
         }
     }
 

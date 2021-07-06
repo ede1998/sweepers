@@ -1,11 +1,11 @@
 use std::{
     collections::VecDeque,
     fmt, iter,
-    ops::Index,
+    ops::{Index, IndexMut},
     time::{Duration, Instant},
 };
 
-use crate::core::Location;
+use crate::{core::Location, generator::SimpleGenerator};
 
 use super::{Action, ExecutedCommand, PendingCommand};
 
@@ -48,6 +48,23 @@ impl<T> Area<T> {
 
     fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
         self.area.iter_mut()
+    }
+}
+
+impl<T> Default for Area<T> {
+    fn default() -> Self {
+        Self {
+            area: vec![],
+            height: 0,
+            width: 0,
+        }
+    }
+}
+
+impl<T> IndexMut<Location> for Area<T> {
+    fn index_mut(&mut self, l: Location) -> &mut Self::Output {
+        let index = l.to_index(self.width).unwrap_or(0);
+        &mut self.area[index]
     }
 }
 
@@ -137,29 +154,58 @@ pub enum ExecutionResult {
     SuccessNoStateChange(ExecutedCommand),
 }
 
+pub struct Parameters {
+    pub width: usize,
+    pub height: usize,
+    pub mine_count: usize,
+}
+
+impl Parameters {
+    pub fn new(width: usize, height: usize, mine_count: usize) -> Self {
+        Self {
+            width,
+            height,
+            mine_count,
+        }
+    }
+}
+
+pub trait MinefieldGenerator {
+    fn generate(&mut self, params: Parameters, not_a_mine: Location) -> Area<GroundKind>;
+}
+
 pub struct Minefield {
     ground: Area<GroundKind>,
-    pub fog: Area<State>,
+    fog: Area<State>,
     state: GameState,
+    generator: Box<dyn MinefieldGenerator>,
 }
 
 impl Minefield {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub fn new(params: Parameters) -> Self {
         Self {
-            ground: Area::new(width, height),
-            fog: Area::new(width, height),
-            state: Default::default(),
+            ground: Default::default(),
+            fog: Area::new(params.width, params.height),
+            state: GameState::new(params.mine_count),
+            generator: Box::new(SimpleGenerator),
         }
+    }
+
+    pub fn with_generator(params: Parameters, generator: Box<dyn MinefieldGenerator>) -> Self {
+        Self {
+            ground: Default::default(),
+            fog: Area::new(params.width, params.height),
+            state: GameState::new(params.mine_count),
+            generator,
+        }
+    }
+
+    pub fn fog(&self) -> &Area<State> {
+        &self.fog
     }
 
     pub fn state(&self) -> &GameState {
         &self.state
-    }
-
-    pub fn set_mines(&mut self, locations: impl Iterator<Item = Location>) {
-        for l in locations {
-            self.ground.get_mut(l).map(|g| *g = GroundKind::Mine);
-        }
     }
 
     pub fn width(&self) -> usize {
@@ -176,6 +222,13 @@ impl Minefield {
 
     pub fn mark_count(&self) -> usize {
         self.fog.iter().filter(|g| g.is_marked()).count()
+    }
+
+    pub fn reset(&mut self) {
+        let (width, height, mine_count) = (self.width(), self.height(), self.mine_count());
+        self.ground = Default::default();
+        self.fog = Area::new(width, height);
+        self.state = GameState::new(mine_count);
     }
 
     pub fn reveal_all(&mut self) {
@@ -248,7 +301,18 @@ impl Minefield {
             "Executing action {:?} at location {}",
             cmd.action, cmd.location
         );
-        let Minefield { ground, fog, state } = self;
+        let Minefield {
+            ground,
+            fog,
+            state,
+            generator,
+        } = self;
+
+        if let &mut GameState::Initial { mine_count} = state {
+            let params = Parameters::new(fog.width, fog.height, mine_count);
+            *ground = generator.generate(params, cmd.location);
+        }
+
         let mut updated_locations = vec![cmd.location];
         match (cmd.action, fog.get_mut(cmd.location)) {
             (Action::Reveal, Some(State::Hidden)) => {
@@ -283,13 +347,17 @@ impl fmt::Display for Minefield {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameState {
-    Initial,
+    Initial { mine_count: usize },
     InProgress { start_time: Instant },
     Loss { game_duration: Duration },
     Win { game_duration: Duration },
 }
 
 impl GameState {
+    pub fn new(mine_count: usize) -> Self {
+        Self::Initial { mine_count }
+    }
+
     fn update(&mut self, fog: &Area<State>, ground: &Area<GroundKind>) -> bool {
         let lost = fog.iter().any(State::is_exploded);
         let won = fog
@@ -297,7 +365,7 @@ impl GameState {
             .zip(ground.iter())
             .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
         let new = match self {
-            GameState::Initial => match fog.iter().all(State::is_hidden) {
+            GameState::Initial { .. } => match fog.iter().all(State::is_hidden) {
                 true => self.clone(),
                 false => match lost {
                     true => GameState::Loss {
@@ -334,11 +402,5 @@ impl GameState {
     /// Returns `true` if the game_state is [`Loss`].
     pub fn is_loss(&self) -> bool {
         matches!(self, Self::Loss { .. })
-    }
-}
-
-impl Default for GameState {
-    fn default() -> Self {
-        GameState::Initial
     }
 }
