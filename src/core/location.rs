@@ -119,7 +119,7 @@ impl Location {
         (0..width * height).map(move |i| Self::from_index(i, width))
     }
 
-    pub fn to_index(&self, width: usize) -> Option<usize> {
+    pub fn to_index(self, width: usize) -> Option<usize> {
         match self.x {
             Bounded::Valid(x) if x < width => (self.y * width.into() + self.x).into(),
             _ => None,
@@ -172,7 +172,6 @@ impl Location {
     }
 
     pub fn mv(self, d: Direction) -> Self {
-        let one = Bounded::Valid(1);
         match d {
             Direction::Left => self.x_minus(1u16),
             Direction::Right => self.x_plus(1u16),

@@ -1,6 +1,4 @@
-use std::{collections::VecDeque, vec};
-
-use super::{Location, Minefield, State};
+use super::Location;
 
 #[derive(Debug, Clone)]
 pub struct PendingCommand {

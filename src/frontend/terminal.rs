@@ -16,26 +16,26 @@ use termion::{
 };
 
 /// The string printed for flagged cells.
-const FLAGGED: &'static [u8] = "F".as_bytes();
+const FLAGGED: &[u8] = "F".as_bytes();
 /// The string printed for mines in the game over revealing.
-const MINE: &'static [u8] = "*".as_bytes();
+const MINE: &[u8] = "*".as_bytes();
 /// The string printed for concealed cells.
-const CONCEALED: &'static [u8] = "▒".as_bytes();
+const CONCEALED: &[u8] = "▒".as_bytes();
 
 /// The upper and lower boundary char.
-const HORZ_BOUNDARY: &'static [u8] = "─".as_bytes();
+const HORZ_BOUNDARY: &[u8] = "─".as_bytes();
 /// The left and right boundary char.
-const VERT_BOUNDARY: &'static [u8] = "│".as_bytes();
+const VERT_BOUNDARY: &[u8] = "│".as_bytes();
 
 /// The top-left corner
-const TOP_LEFT_CORNER: &'static [u8] = "┌".as_bytes();
+const TOP_LEFT_CORNER: &[u8] = "┌".as_bytes();
 /// The top-right corner
-const TOP_RIGHT_CORNER: &'static [u8] = "┐".as_bytes();
+const TOP_RIGHT_CORNER: &[u8] = "┐".as_bytes();
 /// The bottom-left corner
-const BOTTOM_LEFT_CORNER: &'static [u8] = "└".as_bytes();
+const BOTTOM_LEFT_CORNER: &[u8] = "└".as_bytes();
 /// The bottom-right corner
-const BOTTOM_RIGHT_CORNER: &'static [u8] = "┘".as_bytes();
-const NEW_LINE: &'static [u8] = "\n\r".as_bytes();
+const BOTTOM_RIGHT_CORNER: &[u8] = "┘".as_bytes();
+const NEW_LINE: &[u8] = "\n\r".as_bytes();
 
 enum InputEvent {
     None,
