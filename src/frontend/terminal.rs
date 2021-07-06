@@ -1,6 +1,7 @@
 use crate::{
     core::{
-        Action, Bounded, ExecutionResult, GameState, Location, Minefield, PendingCommand, State,
+        Action, Bounded, ExecutionResult, GameState, Location, Minefield, Parameters,
+        PendingCommand, State,
     },
     generator,
 };
@@ -38,6 +39,13 @@ const BOTTOM_LEFT_CORNER: &'static [u8] = "└".as_bytes();
 const BOTTOM_RIGHT_CORNER: &'static [u8] = "┘".as_bytes();
 const NEW_LINE: &'static [u8] = "\n\r".as_bytes();
 
+enum InputEvent {
+    None,
+    Quit,
+    Restart,
+    GameAction(Action, Location),
+}
+
 pub struct Term {
     stdin: AsyncReader,
     stdout: MouseTerminal<RawTerminal<Stdout>>,
@@ -61,7 +69,7 @@ impl Term {
         Self {
             stdin: termion::async_stdin(),
             stdout: std::io::stdout().into_raw_mode().unwrap().into(),
-            mine_field: generator::simple_generate(mines, width, height).into(),
+            mine_field: Minefield::new(Parameters::new(width, height, mines)),
         }
     }
 
@@ -73,27 +81,51 @@ impl Term {
         }
     }
 
-    fn read_input(&mut self) -> Option<termion::event::Event> {
-        (&mut self.stdin).events().next().transpose().ok().flatten()
+    fn read_input(&mut self) -> InputEvent {
+        use termion::event::{
+            Event::{Key, Mouse},
+            Key::*,
+            MouseButton::{Left, Right},
+            MouseEvent::Press,
+        };
+
+        let mouse2loc = |x, y| Location::new(x, y).x_minus(2u16).y_minus(2u16);
+        let game_action = |a, x, y| InputEvent::GameAction(a, mouse2loc(x, y));
+
+        match (&mut self.stdin).events().next().transpose().ok().flatten() {
+            Some(Mouse(Press(Right, x, y))) => game_action(Action::ToggleMark, x, y),
+            Some(Mouse(Press(Left, x, y))) => game_action(Action::Reveal, x, y),
+            Some(Key(Char('q'))) => InputEvent::Quit,
+            Some(Key(Char('r'))) => InputEvent::Restart,
+            _ => InputEvent::None,
+        }
     }
 
     pub fn run(&mut self) -> bool {
         self.print_info();
         match self.mine_field.state() {
-            GameState::Initial | GameState::InProgress { .. } => self.run_in_progress(),
+            GameState::Initial { .. } => self.run_initial(),
+            GameState::InProgress { .. } => self.run_in_progress(),
             GameState::Loss { .. } | GameState::Win { .. } => self.run_after(),
         }
     }
 
-    pub fn run_after(&mut self) -> bool {
-        use termion::event::{Event, Key::*};
+    pub fn run_initial(&mut self) -> bool {
         match self.read_input() {
-            Some(Event::Key(Char('q'))) => false,
-            Some(Event::Key(Char('r'))) => {
-                let mines = self.mine_field.mine_count();
-                let width = self.mine_field.width();
-                let height = self.mine_field.height();
-                self.mine_field = generator::simple_generate(mines, width, height).into();
+            InputEvent::GameAction(action, l) => {
+                self.make_cmd(l, action);
+                true
+            }
+            InputEvent::Quit => false,
+            _ => true,
+        }
+    }
+
+    pub fn run_after(&mut self) -> bool {
+        match self.read_input() {
+            InputEvent::Quit => false,
+            InputEvent::Restart => {
+                self.mine_field.reset();
                 self.reset();
                 true
             }
@@ -102,37 +134,32 @@ impl Term {
     }
 
     pub fn run_in_progress(&mut self) -> bool {
-        use termion::event::{Event, Key::*, MouseButton, MouseEvent};
-
         match self.read_input() {
-            Some(Event::Mouse(MouseEvent::Press(btn, x, y))) => {
-                let action = match btn {
-                    MouseButton::Left => Action::Reveal,
-                    MouseButton::Right => Action::ToggleMark,
-                    _ => return true,
-                };
-                let minus2 = |b| b - Bounded::Valid(2);
-                let l = Location::new(x, y).map_x(minus2).map_y(minus2);
-                let commands = match self.lookup(l).map(State::is_revealed) {
-                    Some(true) => self.reveal_neighbours(l),
-                    Some(false) => vec![PendingCommand::new(l, action)],
-                    None => vec![],
-                };
-                let state_change = commands.into_iter().fold(false, |state_change, cmd| {
-                    self.update_mine_field(cmd) || state_change
-                });
-                if state_change && self.mine_field.state().is_loss() {
-                    self.mine_field.reveal_all();
-                }
+            InputEvent::GameAction(action, l) => {
+                self.make_cmd(l, action);
                 true
             }
-            Some(Event::Key(Char('q'))) => false,
+            InputEvent::Quit => false,
             _ => true,
         }
     }
 
+    fn make_cmd(&mut self, l: Location, action: Action) {
+        let commands = match self.lookup(l).map(State::is_revealed) {
+            Some(true) => self.reveal_neighbours(l),
+            Some(false) => vec![PendingCommand::new(l, action)],
+            None => vec![],
+        };
+        let state_change = commands.into_iter().fold(false, |state_change, cmd| {
+            self.update_mine_field(cmd) || state_change
+        });
+        if state_change && self.mine_field.state().is_loss() {
+            self.mine_field.reveal_all();
+        }
+    }
+
     fn lookup(&self, l: Location) -> Option<&State> {
-        self.mine_field.fog.get(l)
+        self.mine_field.fog().get(l)
     }
 
     fn reveal_neighbours(&self, l: Location) -> Vec<PendingCommand> {
@@ -216,7 +243,7 @@ impl Term {
         let marked_mines = self.mine_field.mark_count();
         use GameState::*;
         let status: Cow<_> = match self.mine_field.state() {
-            Initial => "Ready to go.".into(),
+            Initial { .. } => "Ready to go.".into(),
             Win { game_duration } => format!("VICTORY! ({} sec)", game_duration.as_secs()).into(),
             Loss { game_duration } => format!("DEFEAT. ({} secs)", game_duration.as_secs()).into(),
             InProgress { start_time } => {
@@ -273,7 +300,145 @@ impl Term {
     }
 }
 
-impl Drop for Term {
+struct TermIo {
+    stdin: AsyncReader,
+    stdout: MouseTerminal<RawTerminal<Stdout>>,
+    width: usize,
+    height: usize,
+}
+
+impl TermIo {
+    pub fn new(width: usize, height: usize) -> Self {
+        Self {
+            stdin: termion::async_stdin(),
+            stdout: std::io::stdout().into_raw_mode().unwrap().into(),
+            width,
+            height,
+        }
+    }
+
+    pub fn read_input(&mut self) -> InputEvent {
+        use termion::event::{
+            Event::{Key, Mouse},
+            Key::*,
+            MouseButton::{Left, Right},
+            MouseEvent::Press,
+        };
+
+        let mouse2loc = |x, y| Location::new(x, y).x_minus(2u16).y_minus(2u16);
+        let game_action = |a, x, y| InputEvent::GameAction(a, mouse2loc(x, y));
+
+        match (&mut self.stdin).events().next().transpose().ok().flatten() {
+            Some(Mouse(Press(Right, x, y))) => game_action(Action::ToggleMark, x, y),
+            Some(Mouse(Press(Left, x, y))) => game_action(Action::Reveal, x, y),
+            Some(Key(Char('q'))) => InputEvent::Quit,
+            Some(Key(Char('r'))) => InputEvent::Restart,
+            _ => InputEvent::None,
+        }
+    }
+
+    pub fn draw_many(&mut self, fields: &[(Location, &State)]) {
+        for &(l, s) in fields {
+            self.draw(l, s);
+        }
+    }
+
+    fn draw(&mut self, location: Location, state: &State) {
+        let goto = match self.location_to_cursor(location) {
+            Some(g) => g,
+            None => return,
+        };
+        use termion::color::{Fg, Red, Reset};
+
+        write!(self.stdout, "{}", goto).unwrap();
+        let element: Cow<_> = match state {
+            State::Hidden => CONCEALED.into(),
+            State::Exploded => MINE.into(),
+            State::Revealed { adj_mines } => adj_mines.to_string().as_bytes().to_vec().into(),
+            State::Marked => format!(
+                "{}{}{}",
+                Fg(Red),
+                std::str::from_utf8(FLAGGED).unwrap(),
+                Fg(Reset)
+            )
+            .as_bytes()
+            .to_vec()
+            .into(),
+        };
+
+        self.write(&element);
+    }
+
+    fn location_to_cursor(&self, location: Location) -> Option<cursor::Goto> {
+        let &Self { width, height, .. } = self;
+        location
+            .as_tuple()
+            .filter(|&(x, y)| x < width && y < height)
+            .map(|(x, y)| cursor::Goto(x as u16 + 2, y as u16 + 2))
+    }
+
+    fn print_info(&mut self, mf: &Minefield) {
+        let total_mines = mf.mine_count();
+        let marked_mines = mf.mark_count();
+        use GameState::*;
+        let status: Cow<_> = match mf.state() {
+            Initial { .. } => "Ready to go.".into(),
+            Win { game_duration } => format!("VICTORY! ({} sec)", game_duration.as_secs()).into(),
+            Loss { game_duration } => format!("DEFEAT. ({} secs)", game_duration.as_secs()).into(),
+            InProgress { start_time } => {
+                format!("Time: {} seconds", start_time.elapsed().as_secs()).into()
+            }
+        };
+        let goto = cursor::Goto(3, self.height as u16 + 3);
+        write!(
+            self.stdout,
+            "{}Mines: {:>3}/{:>3}, {}",
+            goto, marked_mines, total_mines, status
+        )
+        .unwrap();
+    }
+
+    fn write(&mut self, data: &[u8]) {
+        self.stdout.write_all(data).unwrap();
+    }
+
+    fn write_iter<'a>(&'a mut self, data: impl Iterator<Item = &'a [u8]>) {
+        for element in data {
+            self.write(element);
+        }
+    }
+
+    pub fn reset(&mut self) {
+        // Reset the cursor.
+        write!(
+            self.stdout,
+            "{}{}{}",
+            clear::All,
+            cursor::Hide,
+            cursor::Goto(1, 1)
+        )
+        .unwrap();
+
+        use iter::once;
+        let cycle_n = |iter, n| iter::repeat(iter).take(n).flatten();
+        // generate a single row of the mine field
+        let row = |left, middle, right| {
+            once(left)
+                .chain(iter::repeat(middle).take(self.width))
+                .chain(once(right))
+        };
+
+        let top_frame = row(TOP_LEFT_CORNER, HORZ_BOUNDARY, TOP_RIGHT_CORNER).chain(once(NEW_LINE));
+        let body_line = row(VERT_BOUNDARY, CONCEALED, VERT_BOUNDARY).chain(once(NEW_LINE));
+        let body = cycle_n(body_line, self.height);
+        let bottom_frame = row(BOTTOM_LEFT_CORNER, HORZ_BOUNDARY, BOTTOM_RIGHT_CORNER);
+        self.write_iter(top_frame.chain(body).chain(bottom_frame));
+
+        self.stdout.flush().unwrap();
+    }
+}
+
+impl Drop for TermIo {
     fn drop(&mut self) {
         // When done, restore the defaults to avoid messing with the terminal.
         write!(
