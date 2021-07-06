@@ -23,14 +23,6 @@ const MINE: &'static [u8] = "*".as_bytes();
 /// The string printed for concealed cells.
 const CONCEALED: &'static [u8] = "▒".as_bytes();
 
-/// The game over screen.
-const GAME_OVER: &'static [u8] = "╔═════════════════╗\n\r\
-                                  ║───┬Game over──║\n\r\
-                                  ║ r ┆ replay   ║\n\r\
-                                  ║ q ┆ quit     ║\n\r\
-                                  ╚═══╧═════════════╝"
-    .as_bytes();
-
 /// The upper and lower boundary char.
 const HORZ_BOUNDARY: &'static [u8] = "─".as_bytes();
 /// The left and right boundary char.
@@ -121,8 +113,14 @@ impl Term {
                 };
                 let minus2 = |b| b - Bounded::Valid(2);
                 let l = Location::new(x, y).map_x(minus2).map_y(minus2);
-                let cmd = PendingCommand::new(l, action);
-                let state_change = self.update_mine_field(cmd);
+                let commands = match self.lookup(l).map(State::is_revealed) {
+                    Some(true) => self.reveal_neighbours(l),
+                    Some(false) => vec![PendingCommand::new(l, action)],
+                    None => vec![],
+                };
+                let state_change = commands.into_iter().fold(false, |state_change, cmd| {
+                    self.update_mine_field(cmd) || state_change
+                });
                 if state_change && self.mine_field.state().is_loss() {
                     self.mine_field.reveal_all();
                 }
@@ -131,6 +129,36 @@ impl Term {
             Some(Event::Key(Char('q'))) => false,
             _ => true,
         }
+    }
+
+    fn lookup(&self, l: Location) -> Option<&State> {
+        self.mine_field.fog.get(l)
+    }
+
+    fn reveal_neighbours(&self, l: Location) -> Vec<PendingCommand> {
+        eprintln!("Trying to reveal all neighbours.");
+        let expected = match self.lookup(l) {
+            Some(&State::Revealed { adj_mines }) => adj_mines,
+            _ => return vec![],
+        };
+        let actual = l
+            .neighbours()
+            .filter_map(|l| self.lookup(l))
+            .filter(|s| s.is_marked())
+            .count();
+
+        eprintln!("Expected: {}, Actual: {}", expected, actual);
+
+        if expected != actual {
+            eprintln!("Not all mines marked.");
+            return vec![];
+        }
+        eprintln!("Trying to reveal all neighbours.");
+
+        l.neighbours()
+            .filter(|&l| self.lookup(l).map(State::is_hidden).unwrap_or(false))
+            .map(|l| PendingCommand::new(l, Action::Reveal))
+            .collect()
     }
 
     fn update_mine_field(&mut self, cmd: PendingCommand) -> bool {
@@ -155,7 +183,7 @@ impl Term {
         use termion::color::{Fg, Red, Reset};
 
         write!(self.stdout, "{}", goto).unwrap();
-        let element: Cow<_> = match self.mine_field.fog.get(location) {
+        let element: Cow<_> = match self.lookup(location) {
             Some(State::Hidden) => CONCEALED.into(),
             Some(State::Exploded) => MINE.into(),
             Some(State::Revealed { adj_mines }) => adj_mines.to_string().as_bytes().to_vec().into(),
