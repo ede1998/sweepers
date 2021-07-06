@@ -4,7 +4,7 @@ use std::{
     ops::{Add, AddAssign, Mul, Sub, SubAssign},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Hash, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Bounded {
     Invalid,
     Valid(usize),
@@ -97,7 +97,7 @@ impl Mul for Bounded {
     }
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Hash, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Location {
     pub x: Bounded,
     pub y: Bounded,
@@ -113,6 +113,10 @@ impl Location {
             x: x.into(),
             y: y.into(),
         }
+    }
+
+    pub fn generate_all(width: usize, height: usize) -> impl Iterator<Item = Self> {
+        (0..width * height).map(move |i| Self::from_index(i, width))
     }
 
     pub fn to_index(&self, width: usize) -> Option<usize> {

@@ -308,7 +308,7 @@ impl Minefield {
             generator,
         } = self;
 
-        if let &mut GameState::Initial { mine_count} = state {
+        if let &mut GameState::Initial { mine_count } = state {
             let params = Parameters::new(fog.width, fog.height, mine_count);
             *ground = generator.generate(params, cmd.location);
         }
