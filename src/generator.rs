@@ -25,3 +25,11 @@ impl MinefieldGenerator for SimpleGenerator {
         }
     }
 }
+
+pub struct DummyGenerator;
+
+impl MinefieldGenerator for DummyGenerator {
+    fn generate(&mut self, params: Parameters, not_a_mine: Location) -> Area<GroundKind> {
+        unreachable!()
+    }
+}

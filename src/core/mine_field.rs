@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{core::Location, generator::SimpleGenerator};
+use crate::{
+    core::Location,
+    generator::{DummyGenerator, SimpleGenerator},
+};
 
 use super::{Action, ExecutedCommand, PendingCommand};
 
@@ -28,6 +31,14 @@ impl<T> Area<T> {
         }
     }
 
+    pub fn with_area(width: usize, height: usize, area: Vec<T>) -> Self {
+        Self {
+            area,
+            width,
+            height,
+        }
+    }
+
     pub fn get_mut(&mut self, l: Location) -> Option<&mut T> {
         let index = l.to_index(self.width)?;
         self.area.get_mut(index)
@@ -40,6 +51,10 @@ impl<T> Area<T> {
 
     pub fn rows(&self) -> impl Iterator<Item = &[T]> {
         self.area.chunks(self.width)
+    }
+
+    pub fn loc_iter(&self) -> impl Iterator<Item = (Location, &T)> {
+        Location::generate_all(self.width, self.height).zip(self.area.iter())
     }
 
     fn iter(&self) -> impl Iterator<Item = &T> {
@@ -129,6 +144,22 @@ impl State {
     pub fn is_marked(&self) -> bool {
         matches!(self, Self::Marked)
     }
+
+    pub fn as_mut_revealed(&mut self) -> Option<&mut usize> {
+        if let Self::Revealed { adj_mines } = self {
+            Some(adj_mines)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_revealed(&self) -> Option<&usize> {
+        if let Self::Revealed { adj_mines } = self {
+            Some(adj_mines)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for State {
@@ -200,6 +231,50 @@ impl Minefield {
         }
     }
 
+    /// m   = hidden mine
+    /// M   = revealed mine
+    /// F   = marked with mine beneath
+    /// f   = marked without mine beneath
+    /// e   = hidden dirt
+    /// E   = revealed dirt
+    /// 0-8 = revealed dirt with unchecked mine count for readibility
+    // meME012345678Ff
+    pub fn new_active_game(grid: &str) -> Self {
+        let width = grid.lines().next().unwrap().len();
+        let height = grid.lines().count();
+
+        let ground = grid
+            .chars()
+            .map(|c| match c {
+                c if "mMF".contains(c) => GroundKind::Mine,
+                c if "efE012345678".contains(c) => GroundKind::Dirt,
+                c => panic!("Invalid character {} cannot be interpreted as ground.", c),
+            })
+            .collect();
+        let ground = Area::with_area(width, height, ground);
+
+        let fog = grid
+            .char_indices()
+            .map(|(i, c)| match c {
+                'M' => State::Exploded,
+                c if "me".contains(c) => State::Hidden,
+                c if "Ff".contains(c) => State::Marked,
+                c if "E012345678".contains(c) => State::Revealed {
+                    adj_mines: Self::mines_in_proximity(&ground, Location::from_index(i, width)),
+                },
+                o => panic!("Invalid character {} cannot be interpreted as fog.", o),
+            })
+            .collect();
+        Self {
+            ground,
+            fog: Area::with_area(width, height, fog),
+            state: GameState::InProgress {
+                start_time: Instant::now(),
+            },
+            generator: Box::new(DummyGenerator),
+        }
+    }
+
     pub fn fog(&self) -> &Area<State> {
         &self.fog
     }
@@ -239,7 +314,7 @@ impl Minefield {
                 GroundKind::Mine => *s = State::Exploded,
                 GroundKind::Dirt => {
                     *s = State::Revealed {
-                        adj_mines: Self::count_mines_in_neighbourhood(ground, location),
+                        adj_mines: Self::mines_in_proximity(ground, location),
                     }
                 }
             }
@@ -262,7 +337,7 @@ impl Minefield {
 
             let target_state = match ground.get(current) {
                 Some(GroundKind::Dirt) => State::Revealed {
-                    adj_mines: Self::count_mines_in_neighbourhood(ground, current),
+                    adj_mines: Self::mines_in_proximity(ground, current),
                 },
                 Some(GroundKind::Mine) => State::Exploded,
                 None => continue,
@@ -279,7 +354,7 @@ impl Minefield {
         affected
     }
 
-    fn count_mines_in_neighbourhood(ground: &Area<GroundKind>, location: Location) -> usize {
+    fn mines_in_proximity(ground: &Area<GroundKind>, location: Location) -> usize {
         location
             .neighbours()
             .filter_map(|l| ground.get(l).copied())
