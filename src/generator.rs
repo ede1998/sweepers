@@ -19,7 +19,12 @@ impl MinefieldGenerator for SimpleGenerator {
                 a[mine_location] = GroundKind::Mine;
             }
 
-            if a.get(not_a_mine).unwrap_or(&GroundKind::Dirt).is_dirt() {
+            let is_zero = not_a_mine
+                .neighbours()
+                .filter_map(|l| a.get(l))
+                .all(|g| g.is_dirt());
+            let is_ground = a.get(not_a_mine).unwrap_or(&GroundKind::Dirt).is_dirt();
+            if is_ground && is_zero {
                 break a;
             }
         }
@@ -29,7 +34,7 @@ impl MinefieldGenerator for SimpleGenerator {
 pub struct DummyGenerator;
 
 impl MinefieldGenerator for DummyGenerator {
-    fn generate(&mut self, params: Parameters, not_a_mine: Location) -> Area<GroundKind> {
+    fn generate(&mut self, _params: Parameters, _not_a_mine: Location) -> Area<GroundKind> {
         unreachable!()
     }
 }
