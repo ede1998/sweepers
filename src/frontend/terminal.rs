@@ -38,7 +38,6 @@ const BOTTOM_RIGHT_CORNER: &[u8] = "┘".as_bytes();
 const NEW_LINE: &[u8] = "\n\r".as_bytes();
 
 enum InputEvent {
-    None,
     Quit,
     Restart,
     GameAction(Action, Location),
@@ -87,19 +86,19 @@ impl Term {
 
     pub fn run_initial(&mut self) -> bool {
         match self.io.read_input() {
-            InputEvent::GameAction(action, l) => {
+            Some(InputEvent::GameAction(action, l)) => {
                 self.execute_action(l, action);
                 true
             }
-            InputEvent::Quit => false,
+            Some(InputEvent::Quit) => false,
             _ => true,
         }
     }
 
     pub fn run_after(&mut self) -> bool {
         match self.io.read_input() {
-            InputEvent::Quit => false,
-            InputEvent::Restart => {
+            Some(InputEvent::Quit) => false,
+            Some(InputEvent::Restart) => {
                 self.mine_field.reset();
                 self.io.reset();
                 true
@@ -110,11 +109,11 @@ impl Term {
 
     pub fn run_in_progress(&mut self) -> bool {
         match self.io.read_input() {
-            InputEvent::GameAction(action, l) => {
+            Some(InputEvent::GameAction(action, l)) => {
                 self.execute_action(l, action);
                 true
             }
-            InputEvent::Quit => false,
+            Some(InputEvent::Quit) => false,
             _ => true,
         }
     }
@@ -190,7 +189,7 @@ impl Term {
 }
 
 struct TermIo {
-    stdin: AsyncReader,
+    stdin: Option<AsyncReader>,
     stdout: MouseTerminal<RawTerminal<Stdout>>,
     width: usize,
     height: usize,
@@ -199,7 +198,7 @@ struct TermIo {
 impl TermIo {
     pub fn new(width: usize, height: usize) -> Self {
         let mut s = Self {
-            stdin: termion::async_stdin(),
+            stdin: Some(termion::async_stdin()),
             stdout: std::io::stdout().into_raw_mode().unwrap().into(),
             width,
             height,
@@ -208,7 +207,7 @@ impl TermIo {
         s
     }
 
-    pub fn read_input(&mut self) -> InputEvent {
+    pub fn read_input(&mut self) -> Option<InputEvent> {
         use termion::event::{
             Event::{Key, Mouse},
             Key::*,
@@ -216,15 +215,42 @@ impl TermIo {
             MouseEvent::Press,
         };
 
-        let mouse2loc = |x, y| Location::new(x, y).x_minus(2u16).y_minus(2u16);
-        let game_action = |a, x, y| InputEvent::GameAction(a, mouse2loc(x, y));
+        // Catch panics while reading events because termion panics if it reads
+        // an unknown CSI sequence.
+        let event = {
+            let stdin = self.stdin.take().expect("Cannot read from stdin.");
+            let stdin = std::sync::Mutex::new(stdin);
+            let event = std::panic::catch_unwind(|| {
+                let mut acquired_lock = stdin.lock();
+                let stdin = acquired_lock.as_deref_mut().unwrap();
+                // Read next event
+                stdin.events().next()
+            });
+            // Restore stdin after putting it in mutex.
+            self.stdin = Some(match stdin.into_inner() {
+                Ok(stdin) => stdin,
+                Err(poisoned_stdin) => poisoned_stdin.into_inner(),
+            });
 
-        match (&mut self.stdin).events().next().transpose().ok().flatten() {
-            Some(Mouse(Press(Right, x, y))) => game_action(Action::ToggleMark, x, y),
-            Some(Mouse(Press(Left, x, y))) => game_action(Action::Reveal, x, y),
-            Some(Key(Char('q'))) => InputEvent::Quit,
-            Some(Key(Char('r'))) => InputEvent::Restart,
-            _ => InputEvent::None,
+            // remove all the wrapper options and results around the event or panic error.
+            match event.map_err(|e| e.downcast::<&'static str>()) {
+                Ok(e) => e.transpose().ok().flatten(),
+                Err(e) => {
+                    eprintln!("Panic while reading io input: {}", e.unwrap_or_default());
+                    None
+                }
+            }
+        };
+
+        let mouse2loc = |x, y| Location::new(x, y).x_minus(2u16).y_minus(2u16);
+        let game_action = |a, x, y| Some(InputEvent::GameAction(a, mouse2loc(x, y)));
+
+        match event? {
+            Mouse(Press(Right, x, y)) => game_action(Action::ToggleMark, x, y),
+            Mouse(Press(Left, x, y)) => game_action(Action::Reveal, x, y),
+            Key(Char('q')) => Some(InputEvent::Quit),
+            Key(Char('r')) => Some(InputEvent::Restart),
+            _ => None,
         }
     }
 
