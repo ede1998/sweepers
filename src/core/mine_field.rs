@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     core::Location,
-    generator::{DummyGenerator, SimpleGenerator},
+    generator::{DummyGenerator, ImprovedGenerator},
 };
 
 use super::{Action, ExecutedCommand, PendingCommand};
@@ -218,7 +218,7 @@ impl Minefield {
             ground: Default::default(),
             fog: Area::new(params.width, params.height),
             state: GameState::new(params.mine_count),
-            generator: Box::new(SimpleGenerator),
+            generator: Box::new(ImprovedGenerator),
         }
     }
 
