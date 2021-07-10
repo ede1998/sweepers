@@ -109,7 +109,7 @@ impl Fact {
     fn derive_count(&self, count: usize) -> Self {
         Self {
             kind: self.kind,
-            count: count,
+            count,
             proximity: self.proximity.clone(),
         }
     }

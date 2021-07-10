@@ -54,7 +54,7 @@ impl ImprovedGenerator {
                 let adjustment = safe_indices
                     .iter()
                     .position(|&p| adjusted_index < p)
-                    .unwrap_or(safe_indices.len());
+                    .unwrap_or_else(|| safe_indices.len());
 
                 // if index didn't get a new adjustment, we are done
                 match index + adjustment == adjusted_index {
