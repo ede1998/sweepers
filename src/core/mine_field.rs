@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt, iter, time::Instant};
+use std::{collections::VecDeque, convert::TryInto, fmt, iter, time::Instant};
 
 use crate::generator::{DummyGenerator, ImprovedGenerator};
 
@@ -174,12 +174,21 @@ impl Minefield {
                 'M' => State::Exploded,
                 c if "me".contains(c) => State::Hidden,
                 c if "Ff".contains(c) => State::Marked,
-                c if "E012345678".contains(c) => State::Revealed {
-                    adj_mines: Self::mines_in_proximity(&ground, Location::from_index(i, width)),
-                },
+                c if "E012345678".contains(c) => {
+                    let expected = c.to_digit(10).and_then(|n| n.try_into().ok());
+                    let location = Location::from_index(i, width);
+                    let actual = Self::mines_in_proximity(&ground, location);
+                    if let Some(expected) = expected {
+                        if actual != expected {
+                            eprintln!("Expected mine count {} in grid string differs from actual value {} at position {}.", expected, actual, location);
+                        }
+                    }
+                    State::Revealed { adj_mines: actual }
+                }
                 o => panic!("Invalid character {} cannot be interpreted as fog.", o),
             })
             .collect();
+
         Self {
             ground,
             fog: Area::with_area(width, height, fog),
