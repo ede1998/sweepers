@@ -1,5 +1,6 @@
 use std::{
     array::IntoIter,
+    convert::TryInto,
     fmt,
     ops::{Add, AddAssign, Mul, Sub, SubAssign},
 };
@@ -43,6 +44,12 @@ impl Bounded {
 impl From<usize> for Bounded {
     fn from(f: usize) -> Self {
         Self::Valid(f)
+    }
+}
+
+impl From<u32> for Bounded {
+    fn from(f: u32) -> Self {
+        Self::Valid(f.try_into().unwrap())
     }
 }
 

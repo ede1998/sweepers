@@ -1,96 +1,8 @@
-use std::{
-    collections::VecDeque,
-    fmt, iter,
-    ops::{Index, IndexMut},
-    time::{Duration, Instant},
-};
+use std::{collections::VecDeque, fmt, iter, time::Instant};
 
-use crate::{
-    core::Location,
-    generator::{DummyGenerator, ImprovedGenerator},
-};
+use crate::generator::{DummyGenerator, ImprovedGenerator};
 
-use super::{Action, ExecutedCommand, PendingCommand};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Area<T> {
-    area: Vec<T>,
-    width: usize,
-    height: usize,
-}
-
-impl<T> Area<T> {
-    pub fn new(width: usize, height: usize) -> Self
-    where
-        T: Default + Clone,
-    {
-        Self {
-            area: vec![Default::default(); width * height],
-            width,
-            height,
-        }
-    }
-
-    pub fn with_area(width: usize, height: usize, area: Vec<T>) -> Self {
-        Self {
-            area,
-            width,
-            height,
-        }
-    }
-
-    pub fn get_mut(&mut self, l: Location) -> Option<&mut T> {
-        let index = l.to_index(self.width)?;
-        self.area.get_mut(index)
-    }
-
-    pub fn get(&self, l: Location) -> Option<&T> {
-        let index = l.to_index(self.width)?;
-        self.area.get(index)
-    }
-
-    pub fn rows(&self) -> impl Iterator<Item = &[T]> {
-        self.area.chunks(self.width)
-    }
-
-    pub fn loc_iter(&self) -> impl Iterator<Item = (Location, &T)> {
-        Location::generate_all(self.width, self.height).zip(self.area.iter())
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &T> {
-        self.area.iter()
-    }
-
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.area.iter_mut()
-    }
-}
-
-impl<T> Default for Area<T> {
-    fn default() -> Self {
-        Self {
-            area: vec![],
-            height: 0,
-            width: 0,
-        }
-    }
-}
-
-impl<T> IndexMut<Location> for Area<T> {
-    fn index_mut(&mut self, l: Location) -> &mut Self::Output {
-        let index = l.to_index(self.width).unwrap_or(0);
-        &mut self.area[index]
-    }
-}
-
-impl<T> Index<Location> for Area<T> {
-    type Output = T;
-
-    fn index(&self, l: Location) -> &Self::Output {
-        let index = l.to_index(self.width).unwrap_or(0);
-        &self.area[index]
-    }
-}
+use super::{Action, Area, ExecutedCommand, GameState, Location, PendingCommand};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GroundKind {
@@ -231,29 +143,32 @@ impl Minefield {
         }
     }
 
-    /// m   = hidden mine
-    /// M   = revealed mine
-    /// F   = marked with mine beneath
-    /// f   = marked without mine beneath
-    /// e   = hidden dirt
-    /// E   = revealed dirt
-    /// 0-8 = revealed dirt with unchecked mine count for readibility
-    // meME012345678Ff
+    /// Load an active game from the given string.
+    /// # Cell types:
+    /// * m   = hidden mine
+    /// * M   = revealed mine
+    /// * F   = marked with mine beneath
+    /// * f   = marked without mine beneath
+    /// * e   = hidden dirt
+    /// * E   = revealed dirt
+    /// * 0-8 = revealed dirt with unchecked mine count for readibility
+    /// * \n  = new row
     pub fn new_active_game(grid: &str) -> Self {
         let width = grid.lines().next().unwrap().len();
         let height = grid.lines().count();
 
-        let ground = grid
+        let stripped_grid = grid.replace(|c: char| c.is_ascii_whitespace(), "");
+        let ground = stripped_grid
             .chars()
             .map(|c| match c {
                 c if "mMF".contains(c) => GroundKind::Mine,
                 c if "efE012345678".contains(c) => GroundKind::Dirt,
-                c => panic!("Invalid character {} cannot be interpreted as ground.", c),
+                c => panic!("Invalid character {:?} cannot be interpreted as ground.", c),
             })
             .collect();
         let ground = Area::with_area(width, height, ground);
 
-        let fog = grid
+        let fog = stripped_grid
             .char_indices()
             .map(|(i, c)| match c {
                 'M' => State::Exploded,
@@ -284,11 +199,11 @@ impl Minefield {
     }
 
     pub fn width(&self) -> usize {
-        self.fog.width
+        self.fog.width()
     }
 
     pub fn height(&self) -> usize {
-        self.fog.height
+        self.fog.height()
     }
 
     pub fn mine_count(&self) -> usize {
@@ -309,7 +224,7 @@ impl Minefield {
     pub fn reveal_all(&mut self) {
         let Minefield { ground, fog, .. } = self;
         for (index, (s, &g)) in fog.iter_mut().zip(ground.iter()).enumerate() {
-            let location = Location::from_index(index, ground.width);
+            let location = Location::from_index(index, ground.width());
             match g {
                 GroundKind::Mine => *s = State::Exploded,
                 GroundKind::Dirt => {
@@ -384,7 +299,7 @@ impl Minefield {
         } = self;
 
         if let GameState::Initial { mine_count } = *state {
-            let params = Parameters::new(fog.width, fog.height, mine_count);
+            let params = Parameters::new(fog.width(), fog.height(), mine_count);
             *ground = generator.generate(params, cmd.location);
         }
 
@@ -407,7 +322,7 @@ impl Minefield {
 
 impl fmt::Display for Minefield {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let delimiter: String = iter::repeat('-').take(self.fog.width).collect();
+        let delimiter: String = iter::repeat('-').take(self.fog.width()).collect();
         writeln!(f, "+{}+", delimiter)?;
         for row in self.fog.rows() {
             write!(f, "|")?;
@@ -420,62 +335,64 @@ impl fmt::Display for Minefield {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GameState {
-    Initial { mine_count: usize },
-    InProgress { start_time: Instant },
-    Loss { game_duration: Duration },
-    Win { game_duration: Duration },
-}
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
 
-impl GameState {
-    pub fn new(mine_count: usize) -> Self {
-        Self::Initial { mine_count }
-    }
+    use super::*;
 
-    fn update(&mut self, fog: &Area<State>, ground: &Area<GroundKind>) -> bool {
-        let lost = fog.iter().any(State::is_exploded);
-        let won = fog
-            .iter()
-            .zip(ground.iter())
-            .all(|(&s, &g)| s.is_revealed() ^ (g.is_mine() && s == State::Marked));
-        let new = match self {
-            GameState::Initial { .. } => match fog.iter().all(State::is_hidden) {
-                true => self.clone(),
-                false => match lost {
-                    true => GameState::Loss {
-                        game_duration: Duration::ZERO,
-                    },
-                    false => GameState::InProgress {
-                        start_time: Instant::now(),
-                    },
-                },
-            },
-            GameState::InProgress { start_time } => match (won, lost) {
-                (false, true) => GameState::Loss {
-                    game_duration: start_time.elapsed(),
-                },
-                (true, false) => GameState::Win {
-                    game_duration: start_time.elapsed(),
-                },
-                (false, false) => self.clone(),
-                (true, true) => {
-                    panic!("Invalid transition, both win and lose at the same time.")
-                }
-            },
-            _ => self.clone(),
+    #[test]
+    fn make_active_game() {
+        let input = "eemeeeeeee
+                          eeeeeeeefe
+                          e012345678
+                          eeeeeeeeee
+                          eeFeeeeeME
+                          eeeeeeeeee";
+        let mf = Minefield::new_active_game(input);
+        println!("{}", mf);
+        let Minefield {
+            fog, ground, state, ..
+        } = mf;
+
+        assert!(matches!(state, GameState::InProgress { .. }));
+        assert_eq!((fog.width(), fog.height()), (10, 6));
+        assert_eq!((ground.width(), ground.height()), (10, 6));
+
+        let mut symbols = HashMap::new();
+        symbols.insert('m', Location::new(2_usize, 0_usize));
+        symbols.insert('f', Location::new(8_usize, 1_usize));
+        symbols.insert('F', Location::new(2_usize, 4_usize));
+        symbols.insert('M', Location::new(8_usize, 4_usize));
+        symbols.insert('E', Location::new(9_usize, 4_usize));
+        symbols.insert('e', Location::new(8_usize, 0_usize));
+        symbols.extend((0..=8).map(|i| {
+            (
+                char::from_digit(i, 10).unwrap(),
+                Location::new(i + 1, 2_usize),
+            )
+        }));
+
+        let check = |symbol, state, ground_kind| {
+            assert_eq!(
+                fog[symbols[&symbol]], state,
+                "Unexpected fog at {} with symbol {}.",
+                symbols[&symbol], symbol
+            );
+            assert_eq!(
+                ground[symbols[&symbol]], ground_kind,
+                "Unexpected ground at {} with symbol {}.",
+                symbols[&symbol], symbol
+            );
         };
-        let old = std::mem::replace(self, new);
-        *self != old
-    }
-
-    /// Returns `true` if the game_state is [`Win`].
-    pub fn is_win(&self) -> bool {
-        matches!(self, Self::Win { .. })
-    }
-
-    /// Returns `true` if the game_state is [`Loss`].
-    pub fn is_loss(&self) -> bool {
-        matches!(self, Self::Loss { .. })
+        check('m', State::Hidden, GroundKind::Mine);
+        check('M', State::Exploded, GroundKind::Mine);
+        check('f', State::Marked, GroundKind::Dirt);
+        check('F', State::Marked, GroundKind::Mine);
+        check('E', State::Revealed { adj_mines: 1 }, GroundKind::Dirt);
+        check('e', State::Hidden, GroundKind::Dirt);
+        for symbol in '0'..='8' {
+            check(symbol, State::Revealed { adj_mines: 0 }, GroundKind::Dirt);
+        }
     }
 }
