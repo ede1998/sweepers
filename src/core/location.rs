@@ -111,6 +111,11 @@ pub struct Location {
 }
 
 impl Location {
+    pub const Invalid: Location = Location {
+        x: Bounded::Invalid,
+        y: Bounded::Invalid,
+    };
+
     pub fn new<I, J>(x: I, y: J) -> Self
     where
         I: Into<Bounded>,

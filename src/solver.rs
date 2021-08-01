@@ -1,6 +1,9 @@
 use custom_debug_derive::Debug;
 use std::{
     collections::{BTreeSet, HashSet},
+    fmt::Display,
+    io::{LineWriter, Write},
+    path::Path,
     str,
 };
 
@@ -22,7 +25,7 @@ where
 }
 
 trait Rule {
-    fn derive(&self, repo: &Solver) -> Vec<Fact>;
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact>;
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -31,10 +34,10 @@ trait Rule {
 struct MinAllToExact;
 
 impl Rule for MinAllToExact {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min() && f.cardinality() == f.count)
-            .map(|f| f.derive_kind(Constraint::Exact, self))
+            .map(|f| f.derive_kind(Constraint::Exact, iteration, self))
             .collect()
     }
 }
@@ -42,20 +45,20 @@ impl Rule for MinAllToExact {
 struct MaxZeroToExact;
 
 impl Rule for MaxZeroToExact {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_max() && f.count == 0)
-            .map(|f| f.derive_kind(Constraint::Exact, self))
+            .map(|f| f.derive_kind(Constraint::Exact, iteration, self))
             .collect()
     }
 }
 struct ExactToMin;
 
 impl Rule for ExactToMin {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Min, self))
+            .map(|f| f.derive_kind(Constraint::Min, iteration, self))
             .collect()
     }
 }
@@ -63,10 +66,10 @@ impl Rule for ExactToMin {
 struct ExactToMax;
 
 impl Rule for ExactToMax {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Max, self))
+            .map(|f| f.derive_kind(Constraint::Max, iteration, self))
             .collect()
     }
 }
@@ -74,13 +77,13 @@ impl Rule for ExactToMax {
 struct MaxRemoveLocations;
 
 impl Rule for MaxRemoveLocations {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_max())
             .flat_map(|f| {
                 f.proximity
                     .iter()
-                    .map(move |l| f.derive_proximity(f.proximity.without(l), self))
+                    .map(move |l| f.derive_proximity(f.proximity.without(l), iteration, self))
             })
             .collect()
     }
@@ -89,7 +92,7 @@ impl Rule for MaxRemoveLocations {
 struct MinCombinator;
 
 impl Rule for MinCombinator {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min())
             .flat_map(|min| {
@@ -104,6 +107,7 @@ impl Rule for MinCombinator {
                     min.count - max.count,
                     &min.proximity - &max.proximity,
                     None,
+                    iteration,
                     self,
                 )
             })
@@ -114,7 +118,7 @@ impl Rule for MinCombinator {
 struct MaxCombinator;
 
 impl Rule for MaxCombinator {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min())
             .flat_map(|min| {
@@ -129,6 +133,7 @@ impl Rule for MaxCombinator {
                     max.count - min.count,
                     &max.proximity - &min.proximity,
                     None,
+                    iteration,
                     self,
                 )
             })
@@ -139,7 +144,7 @@ impl Rule for MaxCombinator {
 struct Seeder;
 
 impl Rule for Seeder {
-    fn derive(&self, _: &Solver) -> Vec<Fact> {
+    fn derive(&self, _: &Solver, iteration: usize) -> Vec<Fact> {
         vec![]
     }
 }
@@ -149,6 +154,18 @@ enum Constraint {
     Min,
     Exact,
     Max,
+}
+
+impl Display for Constraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let str = match self {
+            Constraint::Min => "Min",
+            Constraint::Exact => "Exact",
+            Constraint::Max => "Max",
+        };
+
+        write!(f, "{}", str)
+    }
 }
 
 fn opt_fmt<T: std::fmt::Display>(t: &Option<T>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -170,15 +187,51 @@ where
     write!(f, "}} ")
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq)]
 struct Fact {
     #[debug(with = "opt_fmt")]
     pub base_location: Option<Location>,
+    pub iteration: usize,
     pub produced_by: &'static str,
     pub kind: Constraint,
     pub count: usize,
     #[debug(with = "set_fmt")]
     pub proximity: BTreeSet<Location>,
+}
+
+impl PartialEq for Fact {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.count == other.count && self.proximity == other.proximity
+    }
+}
+
+impl Ord for Fact {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        if let ord @ (Ordering::Greater | Ordering::Less) = self.kind.cmp(&other.kind) {
+            return ord;
+        }
+
+        if let ord @ (Ordering::Greater | Ordering::Less) = self.count.cmp(&other.count) {
+            return ord;
+        }
+
+        self.proximity.cmp(&other.proximity)
+    }
+}
+
+impl PartialOrd for Fact {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl std::hash::Hash for Fact {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.count.hash(state);
+        self.proximity.hash(state);
+    }
 }
 
 impl Fact {
@@ -187,6 +240,7 @@ impl Fact {
         count: usize,
         proximity: BTreeSet<Location>,
         base_location: Option<Location>,
+        iteration: usize,
         produced_by: &dyn Rule,
     ) -> Self {
         Self {
@@ -194,36 +248,45 @@ impl Fact {
             count,
             proximity,
             base_location,
+            iteration,
             produced_by: produced_by.name(),
         }
     }
 
-    fn derive_proximity(&self, proximity: BTreeSet<Location>, produced_by: &dyn Rule) -> Self {
+    fn derive_proximity(
+        &self,
+        proximity: BTreeSet<Location>,
+        iteration: usize,
+        produced_by: &dyn Rule,
+    ) -> Self {
         Self {
             proximity,
             kind: self.kind,
             count: self.count,
             base_location: None,
+            iteration,
             produced_by: produced_by.name(),
         }
     }
 
-    fn derive_count(&self, count: usize, produced_by: &dyn Rule) -> Self {
+    fn derive_count(&self, count: usize, iteration: usize, produced_by: &dyn Rule) -> Self {
         Self {
             kind: self.kind,
             count,
             proximity: self.proximity.clone(),
             base_location: None,
+            iteration,
             produced_by: produced_by.name(),
         }
     }
 
-    fn derive_kind(&self, kind: Constraint, produced_by: &dyn Rule) -> Self {
+    fn derive_kind(&self, kind: Constraint, iteration: usize, produced_by: &dyn Rule) -> Self {
         Self {
             kind,
             count: self.count,
             proximity: self.proximity.clone(),
             base_location: None,
+            iteration,
             produced_by: produced_by.name(),
         }
     }
@@ -242,6 +305,31 @@ impl Fact {
 
     fn is_exact(&self) -> bool {
         matches!(self.kind, Constraint::Exact)
+    }
+
+    fn serialize(&self) -> String {
+        let proximity = {
+            let mut iter = self.proximity.iter();
+            let first = iter
+                .next()
+                .map(ToString::to_string)
+                .unwrap_or_else(Default::default);
+            iter.fold(first, |mut elements, x| {
+                elements.push(',');
+                elements.push_str(&x.to_string());
+                elements
+            })
+        };
+
+        format!(
+            "{};{};{};{};{};{}",
+            self.base_location.unwrap_or(Location::Invalid),
+            self.produced_by,
+            self.iteration,
+            self.kind,
+            self.count,
+            proximity,
+        )
     }
 }
 
@@ -262,7 +350,7 @@ impl Solver {
             .fog()
             .loc_iter()
             .filter_map(|(l, s)| Some((l, *s.as_revealed()?)))
-            .map(|(l, s)| Fact::new(Constraint::Exact, s, make_proximity(l), Some(l), &Seeder))
+            .map(|(l, s)| Fact::new(Constraint::Exact, s, make_proximity(l), Some(l), 0, &Seeder))
             .collect();
         // TODO add rule for all locations
         Self { facts }
@@ -295,6 +383,12 @@ impl Solver {
     }
 
     fn solve(mf: &Minefield) -> (HashSet<Location>, HashSet<Location>) {
+        Solver::solve_dump(mf, None)
+    }
+    fn solve_dump(
+        mf: &Minefield,
+        dump_path: Option<&Path>,
+    ) -> (HashSet<Location>, HashSet<Location>) {
         let mut solver = Solver::seed(mf);
         println!("Base Facts: {:#?}", solver);
         let rules: [Box<dyn Rule>; 7] = [
@@ -307,24 +401,45 @@ impl Solver {
             Box::new(MaxCombinator),
         ];
 
+        let mut iteration = 1;
         loop {
-            let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver)).collect();
+            let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver, iteration)).collect();
             let cont = solver.add(new_facts.into_iter().flatten());
+            iteration += 1;
             if !cont {
                 break;
             }
         }
 
         println!("Final Facts: {:#?}", solver);
+        if let Some(path) = dump_path {
+            solver.dump(path).expect("Failed to dump facts to file.");
+        }
 
         let safe_locations = solver.guaranteed_safe_locations();
         let mines = solver.guaranteed_mines();
         (safe_locations, mines)
     }
+
+    fn dump(&self, path: &Path) -> std::io::Result<()> {
+        let file = std::fs::File::create(path)?;
+        let mut writer = LineWriter::new(file);
+        writeln!(
+            writer,
+            "base location;produced by;iteration;kind;count;proximity"
+        )?;
+        for fact in &self.facts {
+            let line = fact.serialize();
+            writeln!(writer, "{}", line)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
@@ -387,7 +502,7 @@ mod tests {
         let grid = "m1";
         let mf = Minefield::new_active_game(&grid);
 
-        let (safe, mine) = Solver::solve(&mf);
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
 
         assert_eq!(locations([(0, 0)]), mine);
         assert_eq!(locations([]), safe);
@@ -400,7 +515,7 @@ mod tests {
                          ee";
         let mf = Minefield::new_active_game(&grid);
 
-        let (safe, mine) = Solver::solve(&mf);
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
 
         assert_eq!(locations([]), mine);
         assert_eq!(locations([(0, 2), (1, 2)]), safe);
@@ -408,11 +523,11 @@ mod tests {
 
     #[test]
     fn two_fact_mine_and_safe_deduction() {
-        let grid = "eeeee
-                         2211e";
+        let grid = "mmeee
+                         2211m";
         let mf = Minefield::new_active_game(&grid);
 
-        let (safe, mine) = Solver::solve(&mf);
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
 
         assert_eq!(locations([(0, 0)]), mine);
         assert_eq!(locations([(0, 3),]), safe);
@@ -435,6 +550,7 @@ mod tests {
             mine_count,
             proximity,
             Some(l.into()),
+            0,
             &Seeder,
         )
     }
@@ -446,5 +562,9 @@ mod tests {
         for (e, a) in expected.into_iter().zip(actual.into_iter()) {
             assert_eq!(e, a);
         }
+    }
+
+    fn dump_facts_path() -> Option<PathBuf> {
+        std::env::var("DUMP_FACTS").ok().map(Into::into)
     }
 }
