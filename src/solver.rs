@@ -368,7 +368,18 @@ impl Solver {
                 .collect()
         };
 
-        let facts = mf
+        let all_fact = Fact::new(
+            Constraint::Exact,
+            mf.mine_count(),
+            mf.fog()
+                .loc_iter()
+                .filter(|(_, s)| s.is_hidden() || s.is_marked())
+                .map(|(l, _)| l)
+                .collect(),
+            FactDebug::base_all(&Seeder),
+        );
+
+        let field_facts = mf
             .fog()
             .loc_iter()
             .filter_map(|(l, s)| Some((l, *s.as_revealed()?)))
@@ -379,9 +390,10 @@ impl Solver {
                     make_proximity(l),
                     FactDebug::base(l, &Seeder),
                 )
-            })
-            .collect();
-        // TODO add rule for all locations
+            });
+
+        let facts = field_facts.chain(std::iter::once(all_fact)).collect();
+
         Self { facts }
     }
 
