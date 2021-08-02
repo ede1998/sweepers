@@ -502,7 +502,7 @@ mod tests {
             fact((3, 0), 3, [(2, 0), (4, 0), (2, 1)]),
             fact((5, 0), 2, [(4, 0), (6, 1)]),
             fact((6, 0), 1, [(6, 1)]),
-            fact((7, 0), 1, [(6, 1)]),
+            // duplicate fact((7, 0), 1, [(6, 1)]),
             // row 1
             fact((1, 1), 4, [(2, 0), (0, 1), (2, 1), (0, 2), (2, 2)]),
             fact((3, 1), 4, [(2, 0), (4, 0), (2, 1), (4, 2), (2, 2)]),
@@ -517,7 +517,7 @@ mod tests {
             ),
             fact((3, 2), 3, [(2, 1), (2, 2), (4, 2), (2, 3), (3, 3)]),
             fact((5, 2), 2, [(6, 1), (4, 2)]),
-            fact((6, 2), 1, [(6, 1), (7, 2)]),
+            // duplicate fact((6, 2), 1, [(6, 1), (7, 2)]),
             // row 3
             fact((4, 3), 3, [(4, 2), (3, 3), (3, 4), (5, 4)]),
             fact((5, 3), 3, [(4, 2), (5, 4), (6, 4)]),
@@ -532,6 +532,35 @@ mod tests {
             fact((4, 5), 2, [(3, 4), (5, 4), (3, 5)]),
             fact((5, 5), 2, [(5, 4), (6, 4)]),
             fact((6, 5), 3, [(5, 4), (6, 4), (7, 5)]),
+            // all locations
+            fact(
+                (0, 0),
+                15,
+                [
+                    (0, 1),
+                    (0, 2),
+                    (0, 3),
+                    (0, 4),
+                    (1, 3),
+                    (1, 4),
+                    (1, 5),
+                    (2, 0),
+                    (2, 1),
+                    (2, 2),
+                    (2, 3),
+                    (2, 4),
+                    (3, 3),
+                    (3, 4),
+                    (3, 5),
+                    (4, 0),
+                    (4, 2),
+                    (5, 4),
+                    (6, 1),
+                    (6, 4),
+                    (7, 2),
+                    (7, 5),
+                ],
+            ),
         ];
 
         let actual = repo.facts.into_iter().collect();
@@ -579,7 +608,7 @@ mod tests {
     }
 
     fn fact<const N: usize>(
-        l: (usize, usize),
+        _: (usize, usize),
         mine_count: usize,
         proximity: [(usize, usize); N],
     ) -> Fact {
@@ -590,13 +619,15 @@ mod tests {
             Constraint::Exact,
             mine_count,
             proximity,
-            FactDebug::base(l.into(), &Seeder),
+            FactDebug::base(Location::Invalid, &Seeder),
         )
     }
 
     fn check_facts(mut expected: Vec<Fact>, mut actual: Vec<Fact>) {
         expected.sort_unstable();
         actual.sort_unstable();
+        println!("Expected: {:?}", expected);
+        println!("Actual: {:?}", actual);
         assert_eq!(expected.len(), actual.len(), "Different number of facts!");
         for (e, a) in expected.into_iter().zip(actual.into_iter()) {
             assert_eq!(e, a);
