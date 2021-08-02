@@ -108,9 +108,7 @@ impl Rule for MinCombinator {
                     Constraint::Min,
                     min.count - max.count,
                     &min.proximity - &max.proximity,
-                    None,
-                    iteration,
-                    self,
+                    FactDebug::derived(iteration, self),
                 )
             })
             .collect()
@@ -135,9 +133,7 @@ impl Rule for MaxCombinator {
                     Constraint::Max,
                     max.count - min.count,
                     &max.proximity - &min.proximity,
-                    None,
-                    iteration,
-                    self,
+                    FactDebug::derived(iteration, self),
                 )
             })
             .collect()
@@ -190,17 +186,50 @@ where
     write!(f, "}} ")
 }
 
-#[derive(Debug, Clone, Eq)]
-struct Fact {
+#[derive(Debug, Clone)]
+struct FactDebug {
     #[debug(with = "opt_fmt")]
     pub base_location: Option<Location>,
     pub iteration: usize,
     pub produced_by: &'static str,
+}
+
+impl FactDebug {
+    fn base(base_location: Location, produced_by: &dyn Rule) -> Self {
+        Self {
+            base_location: Some(base_location),
+            iteration: 0,
+            produced_by: produced_by.name(),
+        }
+    }
+
+    fn base_all(produced_by: &dyn Rule) -> Self {
+        Self {
+            base_location: None,
+            iteration: 0,
+            produced_by: produced_by.name(),
+        }
+    }
+
+    fn derived(iteration: usize, produced_by: &dyn Rule) -> Self {
+        Self {
+            base_location: None,
+            iteration,
+            produced_by: produced_by.name(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Fact {
     pub kind: Constraint,
     pub count: usize,
     #[debug(with = "set_fmt")]
     pub proximity: BTreeSet<Location>,
+    pub debug: FactDebug,
 }
+
+impl Eq for Fact {}
 
 impl PartialEq for Fact {
     fn eq(&self, other: &Self) -> bool {
@@ -242,17 +271,13 @@ impl Fact {
         kind: Constraint,
         count: usize,
         proximity: BTreeSet<Location>,
-        base_location: Option<Location>,
-        iteration: usize,
-        produced_by: &dyn Rule,
+        debug: FactDebug,
     ) -> Self {
         Self {
             kind,
             count,
             proximity,
-            base_location,
-            iteration,
-            produced_by: produced_by.name(),
+            debug,
         }
     }
 
@@ -266,9 +291,7 @@ impl Fact {
             proximity,
             kind: self.kind,
             count: self.count,
-            base_location: None,
-            iteration,
-            produced_by: produced_by.name(),
+            debug: FactDebug::derived(iteration, produced_by),
         }
     }
 
@@ -277,9 +300,7 @@ impl Fact {
             kind: self.kind,
             count,
             proximity: self.proximity.clone(),
-            base_location: None,
-            iteration,
-            produced_by: produced_by.name(),
+            debug: FactDebug::derived(iteration, produced_by),
         }
     }
 
@@ -288,9 +309,7 @@ impl Fact {
             kind,
             count: self.count,
             proximity: self.proximity.clone(),
-            base_location: None,
-            iteration,
-            produced_by: produced_by.name(),
+            debug: FactDebug::derived(iteration, produced_by),
         }
     }
 
@@ -326,9 +345,9 @@ impl Fact {
 
         format!(
             "{};{};{};{};{};{}",
-            self.base_location.unwrap_or(Location::Invalid),
-            self.produced_by,
-            self.iteration,
+            self.debug.base_location.unwrap_or(Location::Invalid),
+            self.debug.produced_by,
+            self.debug.iteration,
             self.kind,
             self.count,
             proximity,
@@ -353,7 +372,14 @@ impl Solver {
             .fog()
             .loc_iter()
             .filter_map(|(l, s)| Some((l, *s.as_revealed()?)))
-            .map(|(l, s)| Fact::new(Constraint::Exact, s, make_proximity(l), Some(l), 0, &Seeder))
+            .map(|(l, s)| {
+                Fact::new(
+                    Constraint::Exact,
+                    s,
+                    make_proximity(l),
+                    FactDebug::base(l, &Seeder),
+                )
+            })
             .collect();
         // TODO add rule for all locations
         Self { facts }
@@ -552,9 +578,7 @@ mod tests {
             Constraint::Exact,
             mine_count,
             proximity,
-            Some(l.into()),
-            0,
-            &Seeder,
+            FactDebug::base(l.into(), &Seeder),
         )
     }
 
