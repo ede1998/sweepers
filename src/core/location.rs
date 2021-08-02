@@ -111,7 +111,7 @@ pub struct Location {
 }
 
 impl Location {
-    pub const Invalid: Location = Location {
+    pub const INVALID: Location = Location {
         x: Bounded::Invalid,
         y: Bounded::Invalid,
     };

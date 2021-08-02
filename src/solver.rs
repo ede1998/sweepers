@@ -1,5 +1,6 @@
 use custom_debug_derive::Debug;
 use std::{
+    array::IntoIter,
     collections::{BTreeSet, HashSet},
     fmt::Display,
     io::{LineWriter, Write},
@@ -37,7 +38,7 @@ impl Rule for MinAllToExact {
     fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min() && f.cardinality() == f.count)
-            .map(|f| f.derive_kind(Constraint::Exact, iteration, self))
+            .map(|f| f.derive_kind(Constraint::Exact, iteration, self, f))
             .collect()
     }
 }
@@ -48,7 +49,7 @@ impl Rule for MaxZeroToExact {
     fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_max() && f.count == 0)
-            .map(|f| f.derive_kind(Constraint::Exact, iteration, self))
+            .map(|f| f.derive_kind(Constraint::Exact, iteration, self, f))
             .collect()
     }
 }
@@ -58,7 +59,7 @@ impl Rule for ExactToMin {
     fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Min, iteration, self))
+            .map(|f| f.derive_kind(Constraint::Min, iteration, self, f))
             .collect()
     }
 }
@@ -69,7 +70,7 @@ impl Rule for ExactToMax {
     fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Max, iteration, self))
+            .map(|f| f.derive_kind(Constraint::Max, iteration, self, f))
             .collect()
     }
 }
@@ -84,7 +85,7 @@ impl Rule for MaxRemoveLocations {
             .flat_map(|f| {
                 f.proximity
                     .iter()
-                    .map(move |l| f.derive_proximity(f.proximity.without(l), iteration, self))
+                    .map(move |l| f.derive_proximity(f.proximity.without(l), iteration, self, f))
             })
             .collect()
     }
@@ -108,7 +109,7 @@ impl Rule for MinCombinator {
                     Constraint::Min,
                     min.count - max.count,
                     &min.proximity - &max.proximity,
-                    FactDebug::derived(iteration, self),
+                    FactDebug::derived(iteration, self, IntoIter::new([min, max])),
                 )
             })
             .collect()
@@ -133,7 +134,7 @@ impl Rule for MaxCombinator {
                     Constraint::Max,
                     max.count - min.count,
                     &max.proximity - &min.proximity,
-                    FactDebug::derived(iteration, self),
+                    FactDebug::derived(iteration, self, std::array::IntoIter::new([min, max])),
                 )
             })
             .collect()
@@ -192,6 +193,7 @@ struct FactDebug {
     pub base_location: Option<Location>,
     pub iteration: usize,
     pub produced_by: &'static str,
+    pub derived_from: Vec<Fact>,
 }
 
 impl FactDebug {
@@ -200,6 +202,7 @@ impl FactDebug {
             base_location: Some(base_location),
             iteration: 0,
             produced_by: produced_by.name(),
+            derived_from: Vec::new(),
         }
     }
 
@@ -208,14 +211,20 @@ impl FactDebug {
             base_location: None,
             iteration: 0,
             produced_by: produced_by.name(),
+            derived_from: Vec::new(),
         }
     }
 
-    fn derived(iteration: usize, produced_by: &dyn Rule) -> Self {
+    fn derived<'a>(
+        iteration: usize,
+        produced_by: &dyn Rule,
+        parent_facts: impl Iterator<Item = &'a Fact>,
+    ) -> Self {
         Self {
             base_location: None,
             iteration,
             produced_by: produced_by.name(),
+            derived_from: parent_facts.cloned().collect(),
         }
     }
 }
@@ -286,30 +295,43 @@ impl Fact {
         proximity: BTreeSet<Location>,
         iteration: usize,
         produced_by: &dyn Rule,
+        parent_fact: &Fact,
     ) -> Self {
         Self {
             proximity,
             kind: self.kind,
             count: self.count,
-            debug: FactDebug::derived(iteration, produced_by),
+            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
         }
     }
 
-    fn derive_count(&self, count: usize, iteration: usize, produced_by: &dyn Rule) -> Self {
+    fn derive_count(
+        &self,
+        count: usize,
+        iteration: usize,
+        produced_by: &dyn Rule,
+        parent_fact: &Fact,
+    ) -> Self {
         Self {
             kind: self.kind,
             count,
             proximity: self.proximity.clone(),
-            debug: FactDebug::derived(iteration, produced_by),
+            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
         }
     }
 
-    fn derive_kind(&self, kind: Constraint, iteration: usize, produced_by: &dyn Rule) -> Self {
+    fn derive_kind(
+        &self,
+        kind: Constraint,
+        iteration: usize,
+        produced_by: &dyn Rule,
+        parent_fact: &Fact,
+    ) -> Self {
         Self {
             kind,
             count: self.count,
             proximity: self.proximity.clone(),
-            debug: FactDebug::derived(iteration, produced_by),
+            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
         }
     }
 
@@ -345,7 +367,7 @@ impl Fact {
 
         format!(
             "{};{};{};{};{};{}",
-            self.debug.base_location.unwrap_or(Location::Invalid),
+            self.debug.base_location.unwrap_or(Location::INVALID),
             self.debug.produced_by,
             self.debug.iteration,
             self.kind,
@@ -619,7 +641,7 @@ mod tests {
             Constraint::Exact,
             mine_count,
             proximity,
-            FactDebug::base(Location::Invalid, &Seeder),
+            FactDebug::base(Location::INVALID, &Seeder),
         )
     }
 
