@@ -74,6 +74,7 @@ impl Rule for ExactToMax {
     }
 }
 
+/// Produces new max facts by removing one location from an original max fact.
 struct MaxRemoveLocations;
 
 impl Rule for MaxRemoveLocations {
@@ -89,6 +90,7 @@ impl Rule for MaxRemoveLocations {
     }
 }
 
+/// Combine a min and max fact where the min fact has more mines than the max fact.
 struct MinCombinator;
 
 impl Rule for MinCombinator {
@@ -115,6 +117,7 @@ impl Rule for MinCombinator {
     }
 }
 
+/// Combine a min and max fact where the max fact has more mines than the min fact.
 struct MaxCombinator;
 
 impl Rule for MaxCombinator {
