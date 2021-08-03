@@ -263,6 +263,7 @@ struct FactDebug {
     pub base_location: Option<Location>,
     pub iteration: usize,
     pub produced_by: &'static str,
+    #[cfg(feature = "derived_from")]
     pub derived_from: Vec<Fact>,
 }
 
@@ -272,6 +273,7 @@ impl FactDebug {
             base_location: Some(base_location),
             iteration: 0,
             produced_by: produced_by.name(),
+            #[cfg(feature = "derived_from")]
             derived_from: Vec::new(),
         }
     }
@@ -281,6 +283,7 @@ impl FactDebug {
             base_location: None,
             iteration: 0,
             produced_by: produced_by.name(),
+            #[cfg(feature = "derived_from")]
             derived_from: Vec::new(),
         }
     }
@@ -290,6 +293,7 @@ impl FactDebug {
             base_location: None,
             iteration,
             produced_by: produced_by.name(),
+            #[cfg(feature = "derived_from")]
             derived_from: vec![parent_fact.clone()],
         }
     }
@@ -304,6 +308,7 @@ impl FactDebug {
             base_location: None,
             iteration,
             produced_by: produced_by.name(),
+            #[cfg(feature = "derived_from")]
             derived_from: vec![parent_fact_1.clone(), parent_fact_2.clone()],
         }
     }
@@ -415,16 +420,22 @@ impl Fact {
             })
         };
 
-        format!(
-            "{};{};{};{};{};{};{:?}",
+        let default = format!(
+            "{};{};{};{};{};{}",
             self.debug.base_location.unwrap_or(Location::INVALID),
             self.debug.produced_by,
             self.debug.iteration,
             self.kind,
             self.count,
             proximity,
-            self.debug.derived_from
-        )
+        );
+
+        #[cfg(feature = "derived_from")]
+        {
+            return format!("{};{:?}", default, self.debug.derived_from);
+        }
+
+        default
     }
 }
 
@@ -674,6 +685,19 @@ mod tests {
 
         assert_eq!(locations([(0, 0), (1, 0)]), mine);
         assert_eq!(locations([(2, 0), (3, 0)]), safe);
+    }
+
+    #[test]
+    fn cross_deduction() {
+        let grid = "eeeee
+                         em1ee
+                         e111m";
+        let mf = Minefield::new_active_game(&grid);
+
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
+
+        assert_eq!(locations([]), mine);
+        assert_eq!(locations([(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]), safe);
     }
 
     fn locations<const N: usize>(ls: [(usize, usize); N]) -> HashSet<Location> {
