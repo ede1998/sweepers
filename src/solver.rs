@@ -1,6 +1,5 @@
 use custom_debug_derive::Debug;
 use std::{
-    array::IntoIter,
     collections::{BTreeSet, HashSet},
     fmt::Display,
     io::{LineWriter, Write},
@@ -19,7 +18,7 @@ where
     T: Ord + Clone,
 {
     fn without(&self, element: &T) -> Self {
-        let mut result = (*self).clone();
+        let mut result = self.clone();
         result.remove(element);
         result
     }
@@ -83,9 +82,15 @@ impl Rule for MaxRemoveLocations {
         repo.iter()
             .filter(|f| f.is_max())
             .flat_map(|f| {
-                f.proximity
-                    .iter()
-                    .map(move |l| f.derive_proximity(f.proximity.without(l), iteration, self, f))
+                f.proximity.iter().map(move |l| {
+                    let proximity = f.proximity.without(l);
+                    Fact::new(
+                        f.kind,
+                        f.count.min(proximity.len()),
+                        proximity,
+                        FactDebug::derived_one(iteration, self, f),
+                    )
+                })
             })
             .collect()
     }
@@ -109,7 +114,7 @@ impl Rule for MinCombinator {
                     Constraint::Min,
                     min.count - max.count,
                     &min.proximity - &max.proximity,
-                    FactDebug::derived(iteration, self, IntoIter::new([min, max])),
+                    FactDebug::derived_two(iteration, self, min, max),
                 )
             })
             .collect()
@@ -135,7 +140,7 @@ impl Rule for MaxCombinator {
                     Constraint::Max,
                     max.count - min.count,
                     &max.proximity - &min.proximity,
-                    FactDebug::derived(iteration, self, std::array::IntoIter::new([min, max])),
+                    FactDebug::derived_two(iteration, self, min, max),
                 )
             })
             .collect()
@@ -145,7 +150,7 @@ impl Rule for MaxCombinator {
 struct Seeder;
 
 impl Rule for Seeder {
-    fn derive(&self, _: &Solver, iteration: usize) -> Vec<Fact> {
+    fn derive(&self, _: &Solver, _: usize) -> Vec<Fact> {
         vec![]
     }
 }
@@ -216,16 +221,26 @@ impl FactDebug {
         }
     }
 
-    fn derived<'a>(
+    fn derived_one(iteration: usize, produced_by: &dyn Rule, parent_fact: &Fact) -> Self {
+        Self {
+            base_location: None,
+            iteration,
+            produced_by: produced_by.name(),
+            derived_from: vec![parent_fact.clone()],
+        }
+    }
+
+    fn derived_two(
         iteration: usize,
         produced_by: &dyn Rule,
-        parent_facts: impl Iterator<Item = &'a Fact>,
+        parent_fact_1: &Fact,
+        parent_fact_2: &Fact,
     ) -> Self {
         Self {
             base_location: None,
             iteration,
             produced_by: produced_by.name(),
-            derived_from: parent_facts.cloned().collect(),
+            derived_from: vec![parent_fact_1.clone(), parent_fact_2.clone()],
         }
     }
 }
@@ -291,36 +306,6 @@ impl Fact {
         }
     }
 
-    fn derive_proximity(
-        &self,
-        proximity: BTreeSet<Location>,
-        iteration: usize,
-        produced_by: &dyn Rule,
-        parent_fact: &Fact,
-    ) -> Self {
-        Self {
-            proximity,
-            kind: self.kind,
-            count: self.count,
-            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
-        }
-    }
-
-    fn derive_count(
-        &self,
-        count: usize,
-        iteration: usize,
-        produced_by: &dyn Rule,
-        parent_fact: &Fact,
-    ) -> Self {
-        Self {
-            kind: self.kind,
-            count,
-            proximity: self.proximity.clone(),
-            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
-        }
-    }
-
     fn derive_kind(
         &self,
         kind: Constraint,
@@ -332,7 +317,7 @@ impl Fact {
             kind,
             count: self.count,
             proximity: self.proximity.clone(),
-            debug: FactDebug::derived(iteration, produced_by, std::iter::once(parent_fact)),
+            debug: FactDebug::derived_one(iteration, produced_by, parent_fact),
         }
     }
 
