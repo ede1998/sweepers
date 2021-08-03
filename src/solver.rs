@@ -31,6 +31,7 @@ trait Rule {
     }
 }
 
+/// If a set of N location has at least N mines, it has exactly N mines.
 struct MinAllToExact;
 
 impl Rule for MinAllToExact {
@@ -42,6 +43,7 @@ impl Rule for MinAllToExact {
     }
 }
 
+/// If a set of location has at most 0 mines, it has exactly 0 mines.
 struct MaxZeroToExact;
 
 impl Rule for MaxZeroToExact {
@@ -52,6 +54,7 @@ impl Rule for MaxZeroToExact {
             .collect()
     }
 }
+/// If a set of locations has exactly N mines, it has at least N mines.
 struct ExactToMin;
 
 impl Rule for ExactToMin {
@@ -63,6 +66,7 @@ impl Rule for ExactToMin {
     }
 }
 
+/// If a set of locations has exactly N mines, it has at most N mines.
 struct ExactToMax;
 
 impl Rule for ExactToMax {
@@ -91,6 +95,66 @@ impl Rule for MaxRemoveLocations {
                         FactDebug::derived_one(iteration, self, f),
                     )
                 })
+            })
+            .collect()
+    }
+}
+
+/// If a min proximity is a true subset of a max proximity and the max proximity has more or equal number of mines,
+/// then the remaining proximity max without min has at most the remaining mines of max - min.
+struct MinWithinMaxCombinator;
+
+impl Rule for MinWithinMaxCombinator {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
+        repo.iter()
+            .filter(|f| f.is_min())
+            .flat_map(|min| {
+                repo.iter()
+                    .filter(|f| f.is_max())
+                    .map(move |max| (min, max))
+            })
+            .filter(|(min, max)| {
+                min.proximity.is_subset(&max.proximity)
+                    && min.proximity.len() < max.proximity.len()
+                    && max.count >= min.count
+            })
+            .map(|(min, max)| {
+                Fact::new(
+                    Constraint::Max,
+                    max.count - min.count,
+                    &max.proximity - &min.proximity,
+                    FactDebug::derived_two(iteration, self, min, max),
+                )
+            })
+            .collect()
+    }
+}
+
+/// If a max proximity is a true subset of a min proximity and the min proximity has more or equal number of mines,
+/// then the remaining proximity min without max has at least the remaining mines of min - max.
+struct MaxWithinMinCombinator;
+
+impl Rule for MaxWithinMinCombinator {
+    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
+        repo.iter()
+            .filter(|f| f.is_min())
+            .flat_map(|min| {
+                repo.iter()
+                    .filter(|f| f.is_max())
+                    .map(move |max| (min, max))
+            })
+            .filter(|(min, max)| {
+                max.proximity.is_subset(&min.proximity)
+                    && max.proximity.len() < min.proximity.len()
+                    && min.count >= max.count
+            })
+            .map(|(min, max)| {
+                Fact::new(
+                    Constraint::Min,
+                    min.count - max.count,
+                    &min.proximity - &max.proximity,
+                    FactDebug::derived_two(iteration, self, min, max),
+                )
             })
             .collect()
     }
@@ -447,8 +511,8 @@ impl Solver {
             Box::new(MaxZeroToExact),
             Box::new(ExactToMin),
             Box::new(ExactToMax),
-            Box::new(MinCombinator),
-            Box::new(MaxCombinator),
+            Box::new(MinWithinMaxCombinator),
+            Box::new(MaxWithinMinCombinator),
         ];
 
         let mut iteration = 1;
@@ -608,8 +672,8 @@ mod tests {
 
         let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
 
-        assert_eq!(locations([(0, 0)]), mine);
-        assert_eq!(locations([(0, 3),]), safe);
+        assert_eq!(locations([(0, 0), (1, 0)]), mine);
+        assert_eq!(locations([(2, 0), (3, 0)]), safe);
     }
 
     fn locations<const N: usize>(ls: [(usize, usize); N]) -> HashSet<Location> {
