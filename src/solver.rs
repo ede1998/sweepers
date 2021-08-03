@@ -119,6 +119,7 @@ impl Rule for MinCombinator {
 /// Combine a min and max fact where the max fact has more mines than the min fact.
 struct MaxCombinator;
 
+// TOOD: is this combinator even valid?
 impl Rule for MaxCombinator {
     fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
         repo.iter()
@@ -366,13 +367,14 @@ impl Fact {
         };
 
         format!(
-            "{};{};{};{};{};{}",
+            "{};{};{};{};{};{};{:?}",
             self.debug.base_location.unwrap_or(Location::INVALID),
             self.debug.produced_by,
             self.debug.iteration,
             self.kind,
             self.count,
             proximity,
+            self.debug.derived_from
         )
     }
 }
@@ -489,7 +491,7 @@ impl Solver {
         let mut writer = LineWriter::new(file);
         writeln!(
             writer,
-            "base location;produced by;iteration;kind;count;proximity"
+            "base location;produced by;iteration;kind;count;proximity;predecessors"
         )?;
         for fact in &self.facts {
             let line = fact.serialize();
