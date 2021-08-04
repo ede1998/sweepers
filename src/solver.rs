@@ -114,9 +114,9 @@ impl Rule for MinWithinMaxCombinator {
                 _ => None,
             })
             .filter(|(min, max)| {
-                min.proximity.is_subset(&max.proximity)
+                max.count >= min.count
                     && min.proximity.len() < max.proximity.len()
-                    && max.count >= min.count
+                    && min.proximity.is_subset(&max.proximity)
             })
             .map(|(min, max)| {
                 Fact::new(
@@ -144,9 +144,9 @@ impl Rule for MaxWithinMinCombinator {
                 _ => None,
             })
             .filter(|(min, max)| {
-                max.proximity.is_subset(&min.proximity)
+                min.count >= max.count
                     && max.proximity.len() < min.proximity.len()
-                    && min.count >= max.count
+                    && max.proximity.is_subset(&min.proximity)
             })
             .map(|(min, max)| {
                 Fact::new(
