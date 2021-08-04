@@ -1,4 +1,5 @@
 use custom_debug_derive::Debug;
+use rayon::prelude::*;
 use std::{
     collections::{BTreeSet, HashSet},
     fmt::Display,
@@ -86,7 +87,7 @@ impl Rule for MaxRemoveLocations {
         repo.iter_previous_iteration()
             .filter(|f| f.is_max())
             .flat_map(|f| {
-                f.proximity.iter().map(move |l| {
+                f.proximity.par_iter().map(move |l| {
                     let proximity = f.proximity.without(l);
                     Fact::new(
                         f.kind,
@@ -426,16 +427,16 @@ impl Solver {
         self.facts.iter()
     }
 
-    fn iter_previous_iteration(&self) -> impl Iterator<Item = &Fact> {
+    fn iter_previous_iteration(&self) -> impl ParallelIterator<Item = &Fact> {
         let previous_iteration = self.iteration - 1;
         self.facts
-            .iter()
+            .par_iter()
             .filter(move |f| f.iteration == previous_iteration)
     }
 
-    fn iter_new_with_old(&self) -> impl Iterator<Item = (&Fact, &Fact)> {
+    fn iter_new_with_old(&self) -> impl ParallelIterator<Item = (&Fact, &Fact)> {
         self.iter_previous_iteration()
-            .flat_map(move |l| self.facts.iter().map(move |r| (l, r)))
+            .flat_map(move |l| self.facts.par_iter().map(move |r| (l, r)))
     }
 
     fn add<I: IntoIterator<Item = Fact>>(&mut self, container: I) -> bool {
