@@ -25,7 +25,7 @@ where
 }
 
 trait Rule {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact>;
+    fn derive(&self, repo: &Solver) -> Vec<Fact>;
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -35,10 +35,10 @@ trait Rule {
 struct MinAllToExact;
 
 impl Rule for MinAllToExact {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+        repo.iter_previous_iteration()
             .filter(|f| f.is_min() && f.cardinality() == f.count)
-            .map(|f| f.derive_kind(Constraint::Exact, iteration, self, f))
+            .map(|f| f.derive_kind(Constraint::Exact, repo.iteration, self, f))
             .collect()
     }
 }
@@ -47,10 +47,10 @@ impl Rule for MinAllToExact {
 struct MaxZeroToExact;
 
 impl Rule for MaxZeroToExact {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+        repo.iter_previous_iteration()
             .filter(|f| f.is_max() && f.count == 0)
-            .map(|f| f.derive_kind(Constraint::Exact, iteration, self, f))
+            .map(|f| f.derive_kind(Constraint::Exact, repo.iteration, self, f))
             .collect()
     }
 }
@@ -58,10 +58,10 @@ impl Rule for MaxZeroToExact {
 struct ExactToMin;
 
 impl Rule for ExactToMin {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+        repo.iter_previous_iteration()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Min, iteration, self, f))
+            .map(|f| f.derive_kind(Constraint::Min, repo.iteration, self, f))
             .collect()
     }
 }
@@ -70,10 +70,10 @@ impl Rule for ExactToMin {
 struct ExactToMax;
 
 impl Rule for ExactToMax {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+        repo.iter_previous_iteration()
             .filter(|f| f.is_exact())
-            .map(|f| f.derive_kind(Constraint::Max, iteration, self, f))
+            .map(|f| f.derive_kind(Constraint::Max, repo.iteration, self, f))
             .collect()
     }
 }
@@ -82,8 +82,8 @@ impl Rule for ExactToMax {
 struct MaxRemoveLocations;
 
 impl Rule for MaxRemoveLocations {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
+        repo.iter_previous_iteration()
             .filter(|f| f.is_max())
             .flat_map(|f| {
                 f.proximity.iter().map(move |l| {
@@ -92,7 +92,7 @@ impl Rule for MaxRemoveLocations {
                         f.kind,
                         f.count.min(proximity.len()),
                         proximity,
-                        iteration,
+                        repo.iteration,
                         FactDebug::derived_one(self, f),
                     )
                 })
@@ -106,7 +106,7 @@ impl Rule for MaxRemoveLocations {
 struct MinWithinMaxCombinator;
 
 impl Rule for MinWithinMaxCombinator {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min())
             .flat_map(|min| {
@@ -124,7 +124,7 @@ impl Rule for MinWithinMaxCombinator {
                     Constraint::Max,
                     max.count - min.count,
                     &max.proximity - &min.proximity,
-                    iteration,
+                    repo.iteration,
                     FactDebug::derived_two(self, min, max),
                 )
             })
@@ -137,7 +137,7 @@ impl Rule for MinWithinMaxCombinator {
 struct MaxWithinMinCombinator;
 
 impl Rule for MaxWithinMinCombinator {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
+    fn derive(&self, repo: &Solver) -> Vec<Fact> {
         repo.iter()
             .filter(|f| f.is_min())
             .flat_map(|min| {
@@ -155,7 +155,7 @@ impl Rule for MaxWithinMinCombinator {
                     Constraint::Min,
                     min.count - max.count,
                     &min.proximity - &max.proximity,
-                    iteration,
+                    repo.iteration,
                     FactDebug::derived_two(self, min, max),
                 )
             })
@@ -166,7 +166,7 @@ impl Rule for MaxWithinMinCombinator {
 struct Seeder;
 
 impl Rule for Seeder {
-    fn derive(&self, _: &Solver, _: usize) -> Vec<Fact> {
+    fn derive(&self, _: &Solver) -> Vec<Fact> {
         vec![]
     }
 }
@@ -219,18 +219,9 @@ struct FactDebug {
 }
 
 impl FactDebug {
-    fn base(base_location: Location, produced_by: &dyn Rule) -> Self {
+    fn base<O: Into<Option<Location>>>(base_location: O, produced_by: &dyn Rule) -> Self {
         Self {
-            base_location: Some(base_location),
-            produced_by: produced_by.name(),
-            #[cfg(feature = "derived_from")]
-            derived_from: Vec::new(),
-        }
-    }
-
-    fn base_all(produced_by: &dyn Rule) -> Self {
-        Self {
-            base_location: None,
+            base_location: base_location.into(),
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
             derived_from: Vec::new(),
@@ -388,6 +379,7 @@ impl Fact {
 #[derive(Debug)]
 struct Solver {
     facts: HashSet<Fact>,
+    iteration: usize,
 }
 
 impl Solver {
@@ -407,7 +399,7 @@ impl Solver {
                 .map(|(l, _)| l)
                 .collect(),
             0,
-            FactDebug::base_all(&Seeder),
+            FactDebug::base(None, &Seeder),
         );
 
         let field_facts = mf
@@ -426,11 +418,16 @@ impl Solver {
 
         let facts = field_facts.chain(std::iter::once(all_fact)).collect();
 
-        Self { facts }
+        Self { facts, iteration: 1 }
     }
 
     fn iter(&self) -> impl Iterator<Item = &Fact> {
         self.facts.iter()
+    }
+
+    fn iter_previous_iteration(&self) -> impl Iterator<Item = &Fact> {
+        let previous_iteration = self.iteration - 1;
+        self.facts.iter().filter(move |f| f.iteration == previous_iteration)
     }
 
     fn add<I: IntoIterator<Item = Fact>>(&mut self, container: I) -> bool {
@@ -474,11 +471,10 @@ impl Solver {
             Box::new(MaxWithinMinCombinator),
         ];
 
-        let mut iteration = 1;
         loop {
-            let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver, iteration)).collect();
+            let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver)).collect();
             let cont = solver.add(new_facts.into_iter().flatten());
-            iteration += 1;
+            solver.iteration += 1;
             if !cont {
                 break;
             }
@@ -664,6 +660,7 @@ mod tests {
             Constraint::Exact,
             mine_count,
             proximity,
+            0,
             FactDebug::base(Location::INVALID, &Seeder),
         )
     }
