@@ -160,57 +160,6 @@ impl Rule for MaxWithinMinCombinator {
     }
 }
 
-/// Combine a min and max fact where the min fact has more mines than the max fact.
-struct MinCombinator;
-
-impl Rule for MinCombinator {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
-            .filter(|f| f.is_min())
-            .flat_map(|min| {
-                repo.iter()
-                    .filter(|f| f.is_max())
-                    .map(move |max| (min, max))
-            })
-            .filter(|(min, max)| min.count >= max.count)
-            .map(|(min, max)| {
-                Fact::new(
-                    Constraint::Min,
-                    min.count - max.count,
-                    &min.proximity - &max.proximity,
-                    FactDebug::derived_two(iteration, self, min, max),
-                )
-            })
-            .collect()
-    }
-}
-
-/// Combine a min and max fact where the max fact has more mines than the min fact.
-struct MaxCombinator;
-
-// TOOD: is this combinator even valid?
-impl Rule for MaxCombinator {
-    fn derive(&self, repo: &Solver, iteration: usize) -> Vec<Fact> {
-        repo.iter()
-            .filter(|f| f.is_min())
-            .flat_map(|min| {
-                repo.iter()
-                    .filter(|f| f.is_max())
-                    .map(move |max| (min, max))
-            })
-            .filter(|(min, max)| max.count >= min.count)
-            .map(|(min, max)| {
-                Fact::new(
-                    Constraint::Max,
-                    max.count - min.count,
-                    &max.proximity - &min.proximity,
-                    FactDebug::derived_two(iteration, self, min, max),
-                )
-            })
-            .collect()
-    }
-}
-
 struct Seeder;
 
 impl Rule for Seeder {
