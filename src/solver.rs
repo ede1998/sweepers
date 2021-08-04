@@ -228,21 +228,21 @@ impl FactDebug {
         }
     }
 
-    fn derived_one(produced_by: &dyn Rule, parent_fact: &Fact) -> Self {
+    fn derived_one(produced_by: &dyn Rule, _parent_fact: &Fact) -> Self {
         Self {
             base_location: None,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
-            derived_from: vec![parent_fact.clone()],
+            derived_from: vec![_parent_fact.clone()],
         }
     }
 
-    fn derived_two(produced_by: &dyn Rule, parent_fact_1: &Fact, parent_fact_2: &Fact) -> Self {
+    fn derived_two(produced_by: &dyn Rule, _parent_fact_1: &Fact, _parent_fact_2: &Fact) -> Self {
         Self {
             base_location: None,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
-            derived_from: vec![parent_fact_1.clone(), parent_fact_2.clone()],
+            derived_from: vec![_parent_fact_1.clone(), _parent_fact_2.clone()],
         }
     }
 }
