@@ -107,13 +107,24 @@ struct MinWithinMaxCombinator;
 
 impl Rule for MinWithinMaxCombinator {
     fn derive(&self, repo: &Solver) -> Vec<Fact> {
-        repo.iter()
+        let new_min = repo
+            .iter_previous_iteration()
             .filter(|f| f.is_min())
             .flat_map(|min| {
                 repo.iter()
                     .filter(|f| f.is_max())
                     .map(move |max| (min, max))
-            })
+            });
+        let new_max = repo
+            .iter_previous_iteration()
+            .filter(|f| f.is_max())
+            .flat_map(|max| {
+                repo.iter()
+                    .filter(|f| f.is_min())
+                    .map(move |min| (min, max))
+            });
+        new_min
+            .chain(new_max)
             .filter(|(min, max)| {
                 min.proximity.is_subset(&max.proximity)
                     && min.proximity.len() < max.proximity.len()
@@ -138,13 +149,24 @@ struct MaxWithinMinCombinator;
 
 impl Rule for MaxWithinMinCombinator {
     fn derive(&self, repo: &Solver) -> Vec<Fact> {
-        repo.iter()
+        let new_min = repo
+            .iter_previous_iteration()
             .filter(|f| f.is_min())
             .flat_map(|min| {
                 repo.iter()
                     .filter(|f| f.is_max())
                     .map(move |max| (min, max))
-            })
+            });
+        let new_max = repo
+            .iter_previous_iteration()
+            .filter(|f| f.is_max())
+            .flat_map(|max| {
+                repo.iter()
+                    .filter(|f| f.is_min())
+                    .map(move |min| (min, max))
+            });
+        new_min
+            .chain(new_max)
             .filter(|(min, max)| {
                 max.proximity.is_subset(&min.proximity)
                     && max.proximity.len() < min.proximity.len()
@@ -418,7 +440,10 @@ impl Solver {
 
         let facts = field_facts.chain(std::iter::once(all_fact)).collect();
 
-        Self { facts, iteration: 1 }
+        Self {
+            facts,
+            iteration: 1,
+        }
     }
 
     fn iter(&self) -> impl Iterator<Item = &Fact> {
@@ -427,7 +452,9 @@ impl Solver {
 
     fn iter_previous_iteration(&self) -> impl Iterator<Item = &Fact> {
         let previous_iteration = self.iteration - 1;
-        self.facts.iter().filter(move |f| f.iteration == previous_iteration)
+        self.facts
+            .iter()
+            .filter(move |f| f.iteration == previous_iteration)
     }
 
     fn add<I: IntoIterator<Item = Fact>>(&mut self, container: I) -> bool {
