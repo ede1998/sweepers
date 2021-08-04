@@ -107,24 +107,12 @@ struct MinWithinMaxCombinator;
 
 impl Rule for MinWithinMaxCombinator {
     fn derive(&self, repo: &Solver) -> Vec<Fact> {
-        let new_min = repo
-            .iter_previous_iteration()
-            .filter(|f| f.is_min())
-            .flat_map(|min| {
-                repo.iter()
-                    .filter(|f| f.is_max())
-                    .map(move |max| (min, max))
-            });
-        let new_max = repo
-            .iter_previous_iteration()
-            .filter(|f| f.is_max())
-            .flat_map(|max| {
-                repo.iter()
-                    .filter(|f| f.is_min())
-                    .map(move |min| (min, max))
-            });
-        new_min
-            .chain(new_max)
+        repo.iter_new_with_old()
+            .filter_map(|(l, r)| match (l.kind, r.kind) {
+                (Constraint::Min, Constraint::Max) => Some((l, r)),
+                (Constraint::Max, Constraint::Min) => Some((r, l)),
+                _ => None,
+            })
             .filter(|(min, max)| {
                 min.proximity.is_subset(&max.proximity)
                     && min.proximity.len() < max.proximity.len()
@@ -149,24 +137,12 @@ struct MaxWithinMinCombinator;
 
 impl Rule for MaxWithinMinCombinator {
     fn derive(&self, repo: &Solver) -> Vec<Fact> {
-        let new_min = repo
-            .iter_previous_iteration()
-            .filter(|f| f.is_min())
-            .flat_map(|min| {
-                repo.iter()
-                    .filter(|f| f.is_max())
-                    .map(move |max| (min, max))
-            });
-        let new_max = repo
-            .iter_previous_iteration()
-            .filter(|f| f.is_max())
-            .flat_map(|max| {
-                repo.iter()
-                    .filter(|f| f.is_min())
-                    .map(move |min| (min, max))
-            });
-        new_min
-            .chain(new_max)
+        repo.iter_new_with_old()
+            .filter_map(|(l, r)| match (l.kind, r.kind) {
+                (Constraint::Min, Constraint::Max) => Some((l, r)),
+                (Constraint::Max, Constraint::Min) => Some((r, l)),
+                _ => None,
+            })
             .filter(|(min, max)| {
                 max.proximity.is_subset(&min.proximity)
                     && max.proximity.len() < min.proximity.len()
@@ -455,6 +431,11 @@ impl Solver {
         self.facts
             .iter()
             .filter(move |f| f.iteration == previous_iteration)
+    }
+
+    fn iter_new_with_old(&self) -> impl Iterator<Item = (&Fact, &Fact)> {
+        self.iter_previous_iteration()
+            .flat_map(move |l| self.facts.iter().map(move |r| (l, r)))
     }
 
     fn add<I: IntoIterator<Item = Fact>>(&mut self, container: I) -> bool {
