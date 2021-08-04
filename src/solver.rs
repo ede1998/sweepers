@@ -92,7 +92,8 @@ impl Rule for MaxRemoveLocations {
                         f.kind,
                         f.count.min(proximity.len()),
                         proximity,
-                        FactDebug::derived_one(iteration, self, f),
+                        iteration,
+                        FactDebug::derived_one(self, f),
                     )
                 })
             })
@@ -123,7 +124,8 @@ impl Rule for MinWithinMaxCombinator {
                     Constraint::Max,
                     max.count - min.count,
                     &max.proximity - &min.proximity,
-                    FactDebug::derived_two(iteration, self, min, max),
+                    iteration,
+                    FactDebug::derived_two(self, min, max),
                 )
             })
             .collect()
@@ -153,7 +155,8 @@ impl Rule for MaxWithinMinCombinator {
                     Constraint::Min,
                     min.count - max.count,
                     &min.proximity - &max.proximity,
-                    FactDebug::derived_two(iteration, self, min, max),
+                    iteration,
+                    FactDebug::derived_two(self, min, max),
                 )
             })
             .collect()
@@ -210,7 +213,6 @@ where
 struct FactDebug {
     #[debug(with = "opt_fmt")]
     pub base_location: Option<Location>,
-    pub iteration: usize,
     pub produced_by: &'static str,
     #[cfg(feature = "derived_from")]
     pub derived_from: Vec<Fact>,
@@ -220,7 +222,6 @@ impl FactDebug {
     fn base(base_location: Location, produced_by: &dyn Rule) -> Self {
         Self {
             base_location: Some(base_location),
-            iteration: 0,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
             derived_from: Vec::new(),
@@ -230,32 +231,24 @@ impl FactDebug {
     fn base_all(produced_by: &dyn Rule) -> Self {
         Self {
             base_location: None,
-            iteration: 0,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
             derived_from: Vec::new(),
         }
     }
 
-    fn derived_one(iteration: usize, produced_by: &dyn Rule, parent_fact: &Fact) -> Self {
+    fn derived_one(produced_by: &dyn Rule, parent_fact: &Fact) -> Self {
         Self {
             base_location: None,
-            iteration,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
             derived_from: vec![parent_fact.clone()],
         }
     }
 
-    fn derived_two(
-        iteration: usize,
-        produced_by: &dyn Rule,
-        parent_fact_1: &Fact,
-        parent_fact_2: &Fact,
-    ) -> Self {
+    fn derived_two(produced_by: &dyn Rule, parent_fact_1: &Fact, parent_fact_2: &Fact) -> Self {
         Self {
             base_location: None,
-            iteration,
             produced_by: produced_by.name(),
             #[cfg(feature = "derived_from")]
             derived_from: vec![parent_fact_1.clone(), parent_fact_2.clone()],
@@ -269,6 +262,7 @@ struct Fact {
     pub count: usize,
     #[debug(with = "set_fmt")]
     pub proximity: BTreeSet<Location>,
+    pub iteration: usize,
     pub debug: FactDebug,
 }
 
@@ -314,12 +308,14 @@ impl Fact {
         kind: Constraint,
         count: usize,
         proximity: BTreeSet<Location>,
+        iteration: usize,
         debug: FactDebug,
     ) -> Self {
         Self {
             kind,
             count,
             proximity,
+            iteration,
             debug,
         }
     }
@@ -335,7 +331,8 @@ impl Fact {
             kind,
             count: self.count,
             proximity: self.proximity.clone(),
-            debug: FactDebug::derived_one(iteration, produced_by, parent_fact),
+            iteration,
+            debug: FactDebug::derived_one(produced_by, parent_fact),
         }
     }
 
@@ -373,7 +370,7 @@ impl Fact {
             "{};{};{};{};{};{}",
             self.debug.base_location.unwrap_or(Location::INVALID),
             self.debug.produced_by,
-            self.debug.iteration,
+            self.iteration,
             self.kind,
             self.count,
             proximity,
@@ -409,6 +406,7 @@ impl Solver {
                 .filter(|(_, s)| s.is_hidden() || s.is_marked())
                 .map(|(l, _)| l)
                 .collect(),
+            0,
             FactDebug::base_all(&Seeder),
         );
 
@@ -421,6 +419,7 @@ impl Solver {
                     Constraint::Exact,
                     s,
                     make_proximity(l),
+                    0,
                     FactDebug::base(l, &Seeder),
                 )
             });
