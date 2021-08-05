@@ -281,7 +281,7 @@ impl Ord for Fact {
 
 impl PartialOrd for Fact {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -449,7 +449,7 @@ impl Solver {
         self.facts
             .iter()
             .filter(|f| f.is_exact() && f.count == 0)
-            .flat_map(|f| f.proximity.iter().map(|l| *l))
+            .flat_map(|f| f.proximity.iter().copied())
             .collect()
     }
 
@@ -457,7 +457,7 @@ impl Solver {
         self.facts
             .iter()
             .filter(|f| f.is_exact() && f.count == f.proximity.len())
-            .flat_map(|f| f.proximity.iter().map(|l| *l))
+            .flat_map(|f| f.proximity.iter().copied())
             .collect()
     }
 

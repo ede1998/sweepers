@@ -331,7 +331,7 @@ impl Minefield {
 
 impl fmt::Display for Minefield {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let delimiter: String = iter::repeat('-').take(self.fog.width()).collect();
+        let delimiter = "-".repeat(self.fog.width());
         writeln!(f, "+{}+", delimiter)?;
         for row in self.fog.rows() {
             write!(f, "|")?;
