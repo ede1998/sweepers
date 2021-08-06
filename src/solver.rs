@@ -404,7 +404,8 @@ impl Solver {
                 )
             });
 
-        let facts = field_facts.chain(std::iter::once(all_fact)).collect();
+        let facts = field_facts /*.chain(std::iter::once(all_fact))*/
+            .collect();
 
         Self {
             facts,
@@ -485,6 +486,7 @@ impl Solver {
         ];
 
         loop {
+            solver.print_fact_stats();
             let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver)).collect();
             let cont = solver.add(new_facts.into_iter().flatten());
             solver.iteration += 1;
@@ -493,7 +495,7 @@ impl Solver {
             }
         }
 
-        println!("Final Facts: {:#?}", solver);
+        //println!("Final Facts: {:#?}", solver);
         if let Some(path) = dump_path {
             solver.dump(path).expect("Failed to dump facts to file.");
         }
@@ -501,6 +503,25 @@ impl Solver {
         let safe_locations = solver.guaranteed_safe_locations();
         let mines = solver.guaranteed_mines();
         (safe_locations, mines)
+    }
+
+    fn print_fact_stats(&self) {
+        use std::collections::HashMap;
+        println!(
+            "{} facts after iteration {}.",
+            self.facts.len(),
+            self.iteration
+        );
+
+        let facts_per_rule: HashMap<&str, usize> =
+            self.facts
+                .iter()
+                .fold(HashMap::new(), |mut facts_per_rule, fact| {
+                    *facts_per_rule.entry(fact.debug.produced_by).or_default() += 1;
+                    facts_per_rule
+                });
+
+        println!("{:#?}", facts_per_rule);
     }
 
     fn dump(&self, path: &Path) -> std::io::Result<()> {
@@ -705,7 +726,7 @@ mod tests {
                 (3, 4),
                 (18, 5),
                 (16, 6),
-                (18, 7)
+                (18, 6)
             ]),
             safe
         );
