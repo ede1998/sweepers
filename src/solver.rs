@@ -653,6 +653,60 @@ mod tests {
         assert_eq!(locations([(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]), safe);
     }
 
+    /// Test case from a generated minefield.
+    /// ![complex_example][complex_example]
+    /// [complex_example]: pics/complex-example-with-coords.png
+    #[test]
+    fn real_example_1() {
+        let grid = "meeeeeeeem100000000001em
+                         eeemeeeeee111101110113me
+                         emeemmemeeeem101m212meme
+                         emeee3212m11110113meeeem
+                         meeem1001110000002meeeee
+                         eeme21000000001122eeeemm
+                         eemm10000000001memeeeeem";
+        let mf = Minefield::new_active_game(&grid);
+
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
+
+        assert_eq!(
+            locations([
+                (4, 2),
+                (5, 2),
+                (7, 2),
+                (12, 2),
+                (16, 2),
+                (20, 2),
+                (22, 2),
+                (9, 3),
+                (18, 3),
+                (4, 4),
+                (18, 4),
+                (15, 6),
+                (17, 6),
+            ]),
+            mine
+        );
+        assert_eq!(
+            locations([
+                (6, 2),
+                (8, 2),
+                (9, 2),
+                (10, 2),
+                (11, 2),
+                (21, 2),
+                (4, 3),
+                (19, 3),
+                (20, 3),
+                (3, 4),
+                (18, 5),
+                (16, 6),
+                (18, 7)
+            ]),
+            safe
+        );
+    }
+
     fn locations<const N: usize>(ls: [(usize, usize); N]) -> HashSet<Location> {
         std::array::IntoIter::new(ls).map(Into::into).collect()
     }
