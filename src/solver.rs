@@ -79,29 +79,6 @@ impl Rule for ExactToMax {
     }
 }
 
-/// Produces new max facts by removing one location from an original max fact.
-struct MaxRemoveLocations;
-
-impl Rule for MaxRemoveLocations {
-    fn derive(&self, repo: &Solver) -> Vec<Fact> {
-        repo.iter_previous_iteration()
-            .filter(|f| f.is_max())
-            .flat_map(|f| {
-                f.proximity.par_iter().map(move |l| {
-                    let proximity = f.proximity.without(l);
-                    Fact::new(
-                        f.kind,
-                        f.count.min(proximity.len()),
-                        proximity,
-                        repo.iteration,
-                        FactDebug::derived_one(self, f),
-                    )
-                })
-            })
-            .collect()
-    }
-}
-
 /// If a min proximity is a true subset of a max proximity and the max proximity has more or equal number of mines,
 /// then the remaining proximity max without min has at most the remaining mines of max - min.
 struct MinWithinMaxCombinator;
@@ -144,19 +121,28 @@ impl Rule for MaxWithinMinCombinator {
                 (Constraint::Max, Constraint::Min) => Some((r, l)),
                 _ => None,
             })
-            .filter(|(min, max)| {
-                min.count >= max.count
-                    && max.proximity.len() < min.proximity.len()
-                    && max.proximity.is_subset(&min.proximity)
-            })
-            .map(|(min, max)| {
-                Fact::new(
+            .filter_map(|(min, max)| {
+                let intersection = &min.proximity & &max.proximity;
+                if intersection.is_empty() {
+                    // if min is disjoint to max, the two fact do not overlap and
+                    // therefore nothing can be derived.
+                    return None;
+                }
+
+                let max_mines_in_intersection = max.count.min(intersection.len());
+                if min.count <= max_mines_in_intersection {
+                    // if min has less mines in total than maximum in intersection, all mines
+                    // could be in intersection and therefore no meaningful fact can be derived.
+                    return None;
+                }
+
+                Some(Fact::new(
                     Constraint::Min,
-                    min.count - max.count,
+                    min.count - max_mines_in_intersection,
                     &min.proximity - &max.proximity,
                     repo.iteration,
                     FactDebug::derived_two(self, min, max),
-                )
+                ))
             })
             .collect()
     }
@@ -470,9 +456,8 @@ impl Solver {
     ) -> (HashSet<Location>, HashSet<Location>) {
         let mut solver = Solver::seed(mf);
         println!("Base Facts: {:#?}", solver);
-        let rules: [Box<dyn Rule>; 7] = [
+        let rules: [Box<dyn Rule>; 6] = [
             Box::new(MinAllToExact),
-            Box::new(MaxRemoveLocations),
             Box::new(MaxZeroToExact),
             Box::new(ExactToMin),
             Box::new(ExactToMax),
