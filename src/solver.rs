@@ -1,8 +1,5 @@
 use custom_debug_derive::Debug;
 
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
-
 use std::{
     collections::{BTreeSet, HashSet},
     fmt::Display,
@@ -12,21 +9,6 @@ use std::{
 };
 
 use crate::core::{Location, Minefield, State};
-
-trait Without<T> {
-    fn without(&self, element: &T) -> Self;
-}
-
-impl<T> Without<T> for BTreeSet<T>
-where
-    T: Ord + Clone,
-{
-    fn without(&self, element: &T) -> Self {
-        let mut result = self.clone();
-        result.remove(element);
-        result
-    }
-}
 
 trait Rule {
     fn derive(&self, repo: &Solver) -> Vec<Fact>;
@@ -417,21 +399,6 @@ impl Solver {
         self.facts.iter()
     }
 
-    #[cfg(feature = "rayon")]
-    fn iter_previous_iteration(&self) -> impl ParallelIterator<Item = &Fact> {
-        let previous_iteration = self.iteration - 1;
-        self.facts
-            .par_iter()
-            .filter(move |f| f.iteration == previous_iteration)
-    }
-
-    #[cfg(feature = "rayon")]
-    fn iter_new_with_old(&self) -> impl ParallelIterator<Item = (&Fact, &Fact)> {
-        self.iter_previous_iteration()
-            .flat_map(move |l| self.facts.par_iter().map(move |r| (l, r)))
-    }
-
-    #[cfg(not(feature = "rayon"))]
     fn iter_previous_iteration(&self) -> impl Iterator<Item = &Fact> {
         let previous_iteration = self.iteration - 1;
         self.facts
@@ -439,7 +406,6 @@ impl Solver {
             .filter(move |f| f.iteration == previous_iteration)
     }
 
-    #[cfg(not(feature = "rayon"))]
     fn iter_new_with_old(&self) -> impl Iterator<Item = (&Fact, &Fact)> {
         self.iter_previous_iteration()
             .flat_map(move |l| self.facts.iter().map(move |r| (l, r)))
