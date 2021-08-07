@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, convert::TryInto, fmt, iter, time::Instant};
+use std::{
+    collections::VecDeque,
+    convert::TryInto,
+    fmt::{self, Pointer},
+    iter,
+    time::Instant,
+};
 
 use crate::generator::{DummyGenerator, ImprovedGenerator};
 
@@ -217,6 +223,22 @@ impl Minefield {
 
     pub fn mine_count(&self) -> usize {
         self.ground.iter().filter(|g| g.is_mine()).count()
+    }
+
+    pub fn unobserved_count(&self) -> usize {
+        let area = self.width() * self.height();
+        let opened = self
+            .fog
+            .loc_iter()
+            .filter(|(_, s)| s.is_revealed() || s.is_exploded())
+            .map(|(l, _)| l);
+
+        let observed = opened
+            .flat_map(|l| l.neighbours().chain(std::iter::once(l)))
+            .filter(|l| self.fog.contains(*l));
+
+        let unique_observed = observed.collect::<std::collections::HashSet<_>>().len();
+        area - unique_observed
     }
 
     pub fn mark_count(&self) -> usize {

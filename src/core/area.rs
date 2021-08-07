@@ -39,6 +39,12 @@ impl<T> Area<T> {
         self.area.get(index)
     }
 
+    pub fn contains(&self, l: Location) -> bool {
+        l.as_tuple()
+            .map(|(x, y)| x < self.width && y < self.height)
+            .unwrap_or(false)
+    }
+
     /// Get a reference to the area's width.
     pub fn width(&self) -> usize {
         self.width

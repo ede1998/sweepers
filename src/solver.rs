@@ -10,7 +10,7 @@ use std::{
 
 use crate::core::{Location, Minefield, State};
 
-trait Rule {
+trait Rule: std::fmt::Debug {
     fn derive(&self, repo: &Solver) -> Vec<Fact>;
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
@@ -18,6 +18,7 @@ trait Rule {
 }
 
 /// If a set of N location has at least N mines, it has exactly N mines.
+#[derive(Debug)]
 struct MinAllToExact;
 
 impl Rule for MinAllToExact {
@@ -30,6 +31,7 @@ impl Rule for MinAllToExact {
 }
 
 /// If a set of location has at most 0 mines, it has exactly 0 mines.
+#[derive(Debug)]
 struct MaxZeroToExact;
 
 impl Rule for MaxZeroToExact {
@@ -41,6 +43,7 @@ impl Rule for MaxZeroToExact {
     }
 }
 /// If a set of locations has exactly N mines, it has at least N mines.
+#[derive(Debug)]
 struct ExactToMin;
 
 impl Rule for ExactToMin {
@@ -53,6 +56,7 @@ impl Rule for ExactToMin {
 }
 
 /// If a set of locations has exactly N mines, it has at most N mines.
+#[derive(Debug)]
 struct ExactToMax;
 
 impl Rule for ExactToMax {
@@ -66,6 +70,7 @@ impl Rule for ExactToMax {
 
 /// If a min proximity is a true subset of a max proximity and the max proximity has more or equal number of mines,
 /// then the remaining proximity max without min has at most the remaining mines of max - min.
+#[derive(Debug)]
 struct MinWithinMaxCombinator;
 
 impl Rule for MinWithinMaxCombinator {
@@ -96,6 +101,7 @@ impl Rule for MinWithinMaxCombinator {
 
 /// If a max proximity is a true subset of a min proximity and the min proximity has more or equal number of mines,
 /// then the remaining proximity min without max has at least the remaining mines of min - max.
+#[derive(Debug)]
 struct MaxWithinMinCombinator;
 
 impl Rule for MaxWithinMinCombinator {
@@ -133,6 +139,7 @@ impl Rule for MaxWithinMinCombinator {
     }
 }
 
+#[derive(Debug)]
 struct Seeder;
 
 impl Rule for Seeder {
@@ -281,6 +288,19 @@ impl Fact {
         }
     }
 
+    fn seeded<L>(count: usize, proximity: BTreeSet<Location>, base_location: L) -> Self
+    where
+        L: Into<Option<Location>>,
+    {
+        Self {
+            kind: Constraint::Exact,
+            count,
+            proximity,
+            iteration: 0,
+            debug: FactDebug::base(base_location, &Seeder),
+        }
+    }
+
     fn derive_kind(
         &self,
         kind: Constraint,
@@ -347,52 +367,61 @@ impl Fact {
 }
 
 #[derive(Debug)]
-struct Solver {
+struct Solver<'mf> {
     facts: HashSet<Fact>,
     iteration: usize,
+    rules: Vec<Box<dyn Rule>>,
+    #[debug(skip)]
+    mine_field: &'mf Minefield,
 }
 
-impl Solver {
-    fn seed(mf: &Minefield) -> Self {
-        let make_proximity = |l: Location| {
-            l.neighbours()
-                .filter(|&l| mf.fog().get(l).map(State::is_hidden).unwrap_or(false))
-                .collect()
-        };
+impl<'mf> Solver<'mf> {
+    fn new(mine_field: &'mf Minefield) -> Self {
+        Self {
+            facts: HashSet::new(),
+            iteration: 0,
+            rules: Vec::new(),
+            mine_field,
+        }
+    }
 
-        let all_fact = Fact::new(
-            Constraint::Exact,
-            mf.mine_count(),
-            mf.fog()
+    fn seed_universal_fact(&mut self) {
+        let mut universal_fact = Fact::seeded(
+            self.mine_field.mine_count(),
+            self.mine_field
+                .fog()
                 .loc_iter()
                 .filter(|(_, s)| s.is_hidden() || s.is_marked())
                 .map(|(l, _)| l)
                 .collect(),
-            0,
-            FactDebug::base(None, &Seeder),
+            None,
         );
+        universal_fact.iteration = self.iteration;
+        self.facts.insert(universal_fact);
+    }
 
-        let field_facts = mf
-            .fog()
-            .loc_iter()
-            .filter_map(|(l, s)| Some((l, *s.as_revealed()?)))
-            .map(|(l, s)| {
-                Fact::new(
-                    Constraint::Exact,
-                    s,
-                    make_proximity(l),
-                    0,
-                    FactDebug::base(l, &Seeder),
-                )
-            });
+    fn seed(&mut self) {
+        let fog = self.mine_field.fog();
+        let make_proximity = |l: Location| {
+            l.neighbours()
+                .filter(|&l| fog.get(l).map(State::is_hidden).unwrap_or(false))
+                .collect()
+        };
 
-        let facts = field_facts /*.chain(std::iter::once(all_fact))*/
-            .collect();
+        self.facts.extend(
+            fog.loc_iter()
+                .filter_map(|(l, s)| Some((l, *s.as_revealed()?)))
+                .map(|(l, s)| Fact::seeded(s, make_proximity(l), l)),
+        );
+    }
 
-        Self {
-            facts,
-            iteration: 1,
-        }
+    fn seed_rules(&mut self) {
+        self.rules.push(Box::new(MinAllToExact));
+        self.rules.push(Box::new(MaxZeroToExact));
+        self.rules.push(Box::new(ExactToMin));
+        self.rules.push(Box::new(ExactToMax));
+        self.rules.push(Box::new(MinWithinMaxCombinator));
+        self.rules.push(Box::new(MaxWithinMinCombinator));
     }
 
     fn iter(&self) -> impl Iterator<Item = &Fact> {
@@ -436,32 +465,37 @@ impl Solver {
     fn solve(mf: &Minefield) -> (HashSet<Location>, HashSet<Location>) {
         Solver::solve_dump(mf, None)
     }
+
+    fn run(&mut self) {
+        let mut repeat = true;
+        while repeat {
+            self.print_fact_stats();
+            self.iteration += 1;
+            let new_facts: Vec<_> = self.rules.iter().map(|r| r.derive(self)).collect();
+            repeat = self.add(new_facts.into_iter().flatten());
+        }
+    }
+
     fn solve_dump(
         mf: &Minefield,
         dump_path: Option<&Path>,
     ) -> (HashSet<Location>, HashSet<Location>) {
-        let mut solver = Solver::seed(mf);
+        let mut solver = Solver::new(mf);
+        solver.seed_rules();
+        solver.seed();
         println!("Base Facts: {:#?}", solver);
-        let rules: [Box<dyn Rule>; 6] = [
-            Box::new(MinAllToExact),
-            Box::new(MaxZeroToExact),
-            Box::new(ExactToMin),
-            Box::new(ExactToMax),
-            Box::new(MinWithinMaxCombinator),
-            Box::new(MaxWithinMinCombinator),
-        ];
 
-        loop {
-            solver.print_fact_stats();
-            let new_facts: Vec<_> = rules.iter().map(|r| r.derive(&solver)).collect();
-            let cont = solver.add(new_facts.into_iter().flatten());
+        solver.run();
+
+        let remaining_mines = solver.mine_field.mine_count() - solver.guaranteed_mines().len();
+        if solver.mine_field.unobserved_count() <= remaining_mines {
+            // skip one iteration to mark adding a fact
             solver.iteration += 1;
-            if !cont {
-                break;
-            }
+            solver.seed_universal_fact();
+            solver.run();
         }
 
-        //println!("Final Facts: {:#?}", solver);
+        println!("Final Facts: {:#?}", solver);
         if let Some(path) = dump_path {
             solver.dump(path).expect("Failed to dump facts to file.");
         }
@@ -521,7 +555,9 @@ mod tests {
                          1m2m223m
                         ";
         let mf = Minefield::new_active_game(&grid);
-        let repo = Solver::seed(&mf);
+        let mut repo = Solver::new(&mf);
+        repo.seed();
+        repo.seed_universal_fact();
 
         let expected = vec![
             // row 0
