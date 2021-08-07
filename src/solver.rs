@@ -681,6 +681,45 @@ mod tests {
         assert_eq!(locations([(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]), safe);
     }
 
+    #[test]
+    fn corner_deduct_case_1() {
+        let grid = "12m1
+                         em32
+                         ee2m";
+        let mf = Minefield::new_active_game(&grid);
+
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
+
+        assert_eq!(locations([(2, 0), (1, 1), (3, 2)]), mine);
+        assert_eq!(locations([(0, 1), (0, 2), (1, 2)]), safe);
+    }
+
+    #[test]
+    fn corner_deduct_case_2() {
+        let grid = "12m1
+                         me32
+                         em2m";
+        let mf = Minefield::new_active_game(&grid);
+
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
+
+        assert_eq!(locations([(2, 0), (3, 2)]), mine);
+        assert_eq!(locations([]), safe);
+    }
+
+    #[test]
+    fn corner_deduct_case_3() {
+        let grid = "12m1
+                         me32
+                         mm2m";
+        let mf = Minefield::new_active_game(&grid);
+
+        let (safe, mine) = Solver::solve_dump(&mf, dump_facts_path().as_deref());
+
+        assert_eq!(locations([(2, 0), (0, 1), (0, 2), (1, 2), (3, 2)]), mine);
+        assert_eq!(locations([(1, 1)]), safe);
+    }
+
     /// Test case from a generated minefield.
     /// ![complex_example][complex_example]
     /// [complex_example]: pics/complex-example-with-coords.png
