@@ -1,10 +1,4 @@
-use std::{
-    collections::VecDeque,
-    convert::TryInto,
-    fmt::{self, Pointer},
-    iter,
-    time::Instant,
-};
+use std::{collections::VecDeque, convert::TryInto, fmt, time::Instant};
 
 use crate::generator::{DummyGenerator, ImprovedGenerator};
 

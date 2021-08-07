@@ -99,12 +99,12 @@ impl Rule for MinWithinMaxCombinator {
     }
 }
 
-/// If a max proximity is a true subset of a min proximity and the min proximity has more or equal number of mines,
+/// If a max proximity is intersecting a min proximity and the min proximity has more or equal number of mines,
 /// then the remaining proximity min without max has at least the remaining mines of min - max.
 #[derive(Debug)]
-struct MaxWithinMinCombinator;
+struct MaxIntersectsMinCombinator;
 
-impl Rule for MaxWithinMinCombinator {
+impl Rule for MaxIntersectsMinCombinator {
     fn derive(&self, repo: &Solver) -> Vec<Fact> {
         repo.iter_new_with_old()
             .filter_map(|(l, r)| match (l.kind, r.kind) {
@@ -421,7 +421,7 @@ impl<'mf> Solver<'mf> {
         self.rules.push(Box::new(ExactToMin));
         self.rules.push(Box::new(ExactToMax));
         self.rules.push(Box::new(MinWithinMaxCombinator));
-        self.rules.push(Box::new(MaxWithinMinCombinator));
+        self.rules.push(Box::new(MaxIntersectsMinCombinator));
     }
 
     fn iter(&self) -> impl Iterator<Item = &Fact> {
@@ -471,6 +471,8 @@ impl<'mf> Solver<'mf> {
         while repeat {
             self.print_fact_stats();
             self.iteration += 1;
+            #[allow(clippy::needless_collect)]
+            // false positive, cannot remove collect or exclusive borrow overlaps shared borrow of self
             let new_facts: Vec<_> = self.rules.iter().map(|r| r.derive(self)).collect();
             repeat = self.add(new_facts.into_iter().flatten());
         }
@@ -490,7 +492,6 @@ impl<'mf> Solver<'mf> {
         let remaining_mines = solver.mine_field.mine_count() - solver.guaranteed_mines().len();
         if solver.mine_field.unobserved_count() <= remaining_mines {
             // skip one iteration to mark adding a fact
-            solver.iteration += 1;
             solver.seed_universal_fact();
             solver.run();
         }
